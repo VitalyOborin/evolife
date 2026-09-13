@@ -159,10 +159,16 @@ class Brain:
             )
             hidden_ids.append(nid)
         motor_ids: list[int] = []
-        for _ in range(n_motors):
+        # Motor 0 (turn rate) is signed -> TANH. Motors 1..N (move
+        # speed, eat_attempt, reproduce_attempt) are non-negative
+        # intensities -> SIGMOID. Using TANH for non-negative motors
+        # would silently zero out half the output range (clip(0,1)
+        # below), so we set the activation to match the semantics.
+        for i in range(n_motors):
             nid = len(g.nodes)
+            act = Activation.TANH if i == 0 else Activation.SIGMOID
             g.nodes[nid] = NodeGene(
-                id=nid, type=NodeType.MOTOR, activation=Activation.TANH
+                id=nid, type=NodeType.MOTOR, activation=act
             )
             motor_ids.append(nid)
 

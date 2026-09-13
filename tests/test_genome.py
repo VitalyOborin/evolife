@@ -25,12 +25,19 @@ def test_make_default_genome_shape():
 
 def test_node_types_match_activation():
     from evolife.brain import Brain
+    from evolife.genome import NodeType
 
     g = Brain.make_default_genome()
     sensors = g.sensors()
     motors = g.motors()
     assert all(s.activation is Activation.LINEAR for s in sensors)
-    assert all(m.activation is Activation.TANH for m in motors)
+    # Motor 0 is TANH (signed turn rate). Motors 1..N are SIGMOID
+    # (non-negative intensities: speed, eat_attempt, reproduce_attempt).
+    assert motors[0].activation is Activation.TANH
+    assert all(
+        m.activation is Activation.SIGMOID
+        for m in motors[1:]
+    )
 
 
 def test_active_connections_only_enabled():
