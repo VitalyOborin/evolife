@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Local artefacts
+evolife_metrics.sqlite
+*.sqlite
+*.parquet
