@@ -55,3 +55,60 @@ def test_brain_reflects_disabled_connection():
     # With everything disabled, motors should be zero (or at least
     # observably different from out_before).
     assert not np.allclose(out_before, out_after)
+
+
+def test_brain_persistent_state_changes_output_across_ticks():
+    """A brain's state should persist across calls and affect output."""
+    from evolife.genome import ConnectionGene
+
+    g = Brain.make_default_genome()
+    brain = Brain(g)
+    sensors_a = np.array([0.9, 0.0, 0.0, 0.5, 1.0], dtype=np.float32)
+    sensors_b = np.zeros(N_SENSORS, dtype=np.float32)
+
+    # Pump sensors_a for several ticks to fill state.
+    for _ in range(10):
+        brain.forward(sensors_a)
+    state_after_a = brain.state.copy()
+
+    # Now pump sensors_b; state should evolve from sensors_a's state,
+    # not from zero.
+    for _ in range(3):
+        brain.forward(sensors_b)
+    state_after_b = brain.state.copy()
+
+    assert not np.allclose(state_after_a, state_after_b)
+
+
+def test_brain_handles_no_connections():
+    """A genome with no connections must still run, returning zeros."""
+    g = Brain.make_default_genome()
+    g.connections.clear()
+    brain = Brain(g)
+    out = brain.forward(np.ones(N_SENSORS, dtype=np.float32))
+    np.testing.assert_array_equal(out, np.zeros(N_MOTORS, dtype=np.float32))
+
+
+def test_brain_supports_arbitrary_topology():
+    """Brain must execute hidden->sensor and motor->hidden correctly."""
+    from evolife.genome import ConnectionGene, NodeGene, NodeType, Activation
+
+    g = Brain.make_default_genome()
+    # Add a hidden -> hidden connection (a second recurrent edge).
+    hidden_ids = [
+        n.id for n in g.nodes.values() if n.type is NodeType.HIDDEN
+    ]
+    if len(hidden_ids) >= 2:
+        g.connections[100] = ConnectionGene(
+            innovation=100,
+            in_node=hidden_ids[0],
+            out_node=hidden_ids[1],
+            weight=1.5,
+            enabled=True,
+        )
+    brain = Brain(g)
+    sensors = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+    # Run a few ticks; must not raise.
+    for _ in range(5):
+        out = brain.forward(sensors)
+    assert out.shape == (N_MOTORS,)

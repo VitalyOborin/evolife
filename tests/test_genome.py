@@ -1,3 +1,4 @@
+from evolife.brain import Brain
 from evolife.genome import Activation, Genome, NodeGene, NodeType
 
 
@@ -38,3 +39,31 @@ def test_active_connections_only_enabled():
     g.nodes[1] = NodeGene(id=1, type=NodeType.MOTOR)
     # No connections yet; iteration should be empty.
     assert list(g.active_connections()) == []
+
+
+def test_fingerprint_is_stable():
+    g = Brain.make_default_genome()
+    h1 = g.fingerprint()
+    h2 = g.fingerprint()
+    assert h1 == h2
+    assert len(h1) == 16
+
+
+def test_fingerprint_changes_with_weights():
+    g = Brain.make_default_genome()
+    h1 = g.fingerprint()
+    # Perturb one weight.
+    key = next(iter(g.connections))
+    g.connections[key].weight += 1.0
+    h2 = g.fingerprint()
+    assert h1 != h2
+
+
+def test_fingerprint_changes_with_topology():
+    g = Brain.make_default_genome()
+    h1 = g.fingerprint()
+    # Disable one connection.
+    key = next(iter(g.connections))
+    g.connections[key].enabled = False
+    h2 = g.fingerprint()
+    assert h1 != h2

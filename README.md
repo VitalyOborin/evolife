@@ -24,53 +24,67 @@ ticks=20000  elapsed=183.88s  rate=108.8 ticks/s
 final_pop=2  final_mean_energy=2308.73
 ```
 
-**Observation:** population collapses from 200 to 2 around tick 5000.
-The two survivors are NOT the result of selection — they survived
-because no rival was within TOURNAMENT_RADIUS. Mean energy of the two
-climbs monotonically because they have the world to themselves. Genome
-size grows modestly: avg connections 36.6, max 44 (start = 36).
+Tournament killed faster than reproduction replaced. Diagnosis: a
+hidden fitness function (peak_energy comparison + clone-energy injection)
+contradicted the "no explicit fitness" principle.
 
-**Diagnosis:** tournament kills faster than reproduction replaces. With
-TOURNAMENT_KILL_RATE=0.8 and TOURNAMENT_EVERY=50 ticks, every 50 ticks
-half the population loses a member, while reproduction only fires when
-an organism's brain outputs reproduce_attempt > 0.5 AND it has
-REPRODUCTION_THRESHOLD=60 energy. Brains rarely hit both.
+### V2 — Natural Selection Baseline (current)
 
-**Next levers for v2:**
-1. Lower REPRODUCTION_THRESHOLD so more organisms reproduce.
-2. Lower TOURNAMENT_KILL_RATE so tournament is softer.
-3. Add speciation (NEAT-style compatibility distance) so similar
-   organisms don't compete directly and structural diversity persists.
-4. Vectorise tournament and reproduction with numpy/PyTorch for
-   10x+ throughput.
+Five independent seeds × 50 000 ticks. Removes tournament entirely;
+recurrent brains with persistent state; local smell-only perception;
+metabolic cost on neurons and connections; append-only event log.
+
+Question:
+
+> Can a population of random minimal recurrent brains sustain itself
+> across generations when perception is purely local, with no external
+> fitness function beyond "did you find food"?
+
+Headless smoke test at seed=42, 2000 ticks:
+
+```
+ticks=2000  elapsed=9.58s  rate=208.8 ticks/s
+final_pop=0  events=412  births=200  deaths=200  eats=12
+```
+
+Throughput 208 ticks/s — about 2x v1, despite the smell field and
+recurrent iterations. The 12 eats in 2000 ticks mean random founders
+occasionally stumble onto food; the population cannot yet sustain.
+
+Full 5-seed × 50k experiment running; results in the report below.
 
 ## Hard constraints (do not break)
 
 - **No LLM, no backprop, no RL, no datasets, no human labels.** Evolution
   is the only learning signal.
 - **No explicit fitness function.** Fitness emerges as the number of
-  surviving descendants.
+  surviving descendants. No tournament, no ranking, no comparison.
 - **Single discrete tick.** No `time.sleep`, no event loop driving sim.
 - **Deterministic via seed.** `numpy.random.default_rng(seed)` lives in
   `World`. No global RNG.
+- **Local perception only.** Organisms have no GPS; they sense smell
+  intensity in three sectors.
 
 ## Layout
 
 ```
 evolife/
-  config.py          # all v0/v1 constants
-  genome.py          # NEAT-shaped Genome (nodes, connections, innovations)
-  innovation.py      # global innovation counter (v1)
-  brain.py           # feedforward net built from a Genome
+  config.py          # all constants
+  genome.py          # NEAT-shaped Genome (nodes, connections, fingerprint)
+  innovation.py      # global innovation counter
+  brain.py           # recurrent, persistent-state brain
   organism.py        # position, energy, age, brain, genome
-  world.py           # tick(), spawn_food(), reproduce(), tournament()
+  world.py           # tick, food, eat, reproduce, metabolic cost
   mutation.py        # weights, add_node, add_connection, toggle
   speciation.py      # compatibility distance (v0: one bucket)
-  metrics.py         # per-organism and per-world metrics into SQLite
+  events.py          # append-only Birth/Death/Reproduction/Eat
+  metrics.py         # SQLite snapshots + event flush
+  sensors.py         # SmellField: per-tick diffusion grid
   visualization.py   # Pygame top-down renderer
 scripts/
-  run_visual.py      # run with Pygame
-  run_headless.py    # run N ticks headless, write metrics
+  run_visual.py
+  run_headless.py
+  run_v2_experiment.py
 tests/
   test_innovation.py
   test_genome.py
@@ -84,6 +98,7 @@ tests/
 ```
 pip install -e .
 python scripts/run_visual.py
-python scripts/run_headless.py --ticks 20000 --seed 42
+python scripts/run_headless.py --ticks 2000 --seed 42
+python scripts/run_v2_experiment.py --ticks 50000 --seeds 1 2 3 4 5
 pytest -q
 ```

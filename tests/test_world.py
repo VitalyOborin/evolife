@@ -6,7 +6,6 @@ from evolife.config import (
     INITIAL_POPULATION,
     MAX_AGE,
     POPULATION_CAP,
-    TOURNAMENT_EVERY,
 )
 from evolife.world import World
 
@@ -75,9 +74,9 @@ def test_food_energy_is_finite():
 
 
 def test_tournament_runs_without_crashing():
-    """A few tournament windows should not raise."""
+    """Sanity check that the world steps without crashing on a few ticks."""
     w = World(seed=11)
-    for _ in range(2 * TOURNAMENT_EVERY):
+    for _ in range(200):
         w.step()
     assert w.population() >= 0
 
@@ -101,3 +100,29 @@ def test_mutation_can_change_genome_topology():
     # is stochastic.
     assert isinstance(final_total, int)
     assert isinstance(initial_total, int)
+
+
+def test_events_recorded_on_birth_and_death():
+    """World should emit at least one Birth and one Death event."""
+    from evolife.events import EventKind
+
+    w = World(seed=99)
+    # Drain everyone to starvation over a few ticks.
+    for org in w.organisms:
+        org.energy = 0.001
+    for _ in range(100):
+        w.step()
+    by_kind = w.events.by_kind()
+    assert len(by_kind[EventKind.BIRTH]) >= INITIAL_POPULATION
+    assert len(by_kind[EventKind.DEATH]) >= 1
+
+
+def test_smell_field_changes_with_food_layout():
+    from evolife.sensors import SmellField
+    from evolife.world import Food
+
+    field = SmellField(64, 64, radius=8)
+    empty = field.sample(32.0, 32.0, 0.0, 1.0).copy()
+    field.recompute([Food(x=32.0, y=32.0)])
+    with_food = field.sample(32.0, 32.0, 0.0, 1.0)
+    assert with_food.sum() > empty.sum()

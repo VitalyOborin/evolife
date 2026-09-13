@@ -64,40 +64,48 @@ MAX_AGE: int = 50_000
 
 # --- Brain -----------------------------------------------------------------
 
-# Sensor layout for v0. Keep them raw and cheap; we can add rays later.
-# Order matters: brain input vector is laid out in this exact order.
-# Index 0: food_angle in [-1, 1] (sin of relative angle, normalised).
-# Index 1: food_distance in [0, 1] (1 at zero distance, ~0 at WORLD_WIDTH).
-# Index 2: own_energy in [0, 1] (energy / REPRODUCTION_THRESHOLD, clipped).
-# Index 3: own_speed in [0, 1] (linear speed / MAX_LINEAR_SPEED).
-# Index 4: bias (constant 1.0, like a Perceptron bias neuron).
+# Sensor layout for v2 (local smell only):
+# Index 0: smell_left  in [0, 1] — smell intensity in left sector.
+# Index 1: smell_front in [0, 1] — smell intensity in front sector.
+# Index 2: smell_right in [0, 1] — smell intensity in right sector.
+# Index 3: own_energy in [0, 1] — energy / REPRODUCTION_THRESHOLD.
+# Index 4: bias        = 1.0 (constant).
 N_SENSORS: int = 5
 
-# Motor outputs:
-# Index 0: turn_rate in [-1, 1] -> multiplied by MAX_TURN_RATE.
-# Index 1: move_speed in [0, 1] -> multiplied by MAX_LINEAR_SPEED.
-# Index 2: eat_attempt in [0, 1]. > 0.5 means try to eat whatever is at
-#          the front of the organism (within EAT_RADIUS).
-# Index 3: reproduce_attempt in [0, 1]. > 0.5 means try to reproduce if
-#          energy threshold is met and POPULATION_CAP is not exceeded.
+# Motor outputs (unchanged from v0):
+# Index 0: turn_rate     in [-1, 1] -> MAX_TURN_RATE.
+# Index 1: move_speed    in [0, 1]  -> MAX_LINEAR_SPEED.
+# Index 2: eat_attempt   > 0.5 means try to eat (within EAT_RADIUS).
+# Index 3: reproduce_attempt > 0.5 means try to reproduce.
 N_MOTORS: int = 4
 
-# Hidden layer size in the v0 fixed-topology brain. v1 will read this from
-# the genome.
 N_HIDDEN: int = 4
 
-# Maximum forward speed in cells per tick.
 MAX_LINEAR_SPEED: float = 2.0
-
-# Maximum turn rate in radians per tick.
 MAX_TURN_RATE: float = 0.3
-
-# Radius within which an eat_attempt consumes the nearest food particle.
 EAT_RADIUS: float = 4.0
-
-# Radius within which organisms cannot overlap (soft collision: they push
-# each other apart; this is a v0 hack, real collision response comes later).
 COLLISION_RADIUS: float = 3.0
+
+
+# --- Sensors: smell field ---------------------------------------------------
+
+# Radius (in cells) of the smell diffusion kernel. Larger radius ->
+# longer-range smell but more compute per tick.
+SMELL_FIELD_RADIUS: int = 24
+
+# Half-angle of each smell sector in radians. 3 sectors of width
+# 2*half_angle cover (3 * 2 * half_angle) radians; for pi/3 (=60deg)
+# half-angle each, this gives full 360 coverage with overlap.
+SMELL_HALF_ANGLE: float = 1.05  # ~60deg
+
+
+# --- Metabolic cost (v2) ----------------------------------------------------
+
+# Per-tick energy drain per neuron. Bigger brains are more expensive.
+NEURON_METABOLIC_COST: float = 0.005
+
+# Per-tick energy drain per active connection.
+CONNECTION_METABOLIC_COST: float = 0.001
 
 
 # --- Mutation --------------------------------------------------------------
@@ -120,22 +128,13 @@ ADD_CONNECTION_RATE: float = 0.05
 TOGGLE_CONNECTION_RATE: float = 0.01
 
 
-# --- Selection (microbial tournament) ---------------------------------------
+# --- Selection (natural) ---------------------------------------------------
 
-# How often (in ticks) the world runs a tournament sweep. A sweep visits
-# every organism and looks for a nearby rival.
-TOURNAMENT_EVERY: int = 50
-
-# Radius (in cells) within which two organisms may be paired as rivals.
-TOURNAMENT_RADIUS: float = 32.0
-
-# Per-tournament-pair probability that the loser dies and the winner
-# clones (with mutation) nearby. Acts as soft selection pressure even
-# when the world is full.
-TOURNAMENT_KILL_RATE: float = 0.8
-
-# Energy awarded to the winning cloner. The clone starts with this much.
-TOURNAMENT_CLONE_ENERGY: float = 30.0
+# No external fitness function. Organisms that find food live; those that
+# don't die. Reproduction happens automatically when energy exceeds
+# REPRODUCTION_THRESHOLD. No tournament, no ranking, no comparison.
+# Selection is purely "did you eat enough to not starve and to afford
+# reproduction?"
 
 
 # --- Visualisation ---------------------------------------------------------

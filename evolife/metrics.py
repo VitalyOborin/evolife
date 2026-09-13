@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS organism_snapshots (
     alive        INTEGER NOT NULL,
     PRIMARY KEY (tick, organism_id)
 );
+
+CREATE TABLE IF NOT EXISTS events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick         INTEGER NOT NULL,
+    kind         TEXT    NOT NULL,
+    org_id       INTEGER,
+    parent_id    INTEGER,
+    child_id     INTEGER,
+    cause        TEXT,
+    genome_hash  TEXT,
+    x            REAL,
+    y            REAL
+);
+CREATE INDEX IF NOT EXISTS events_tick_idx ON events(tick);
+CREATE INDEX IF NOT EXISTS events_kind_idx ON events(kind);
 """
 
 
@@ -90,6 +105,33 @@ class Metrics:
         self._conn.executemany(
             "INSERT OR REPLACE INTO organism_snapshots VALUES "
             "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+
+    def flush_events(self, events) -> None:
+        """Persist events from an EventLog to the events table."""
+        rows = []
+        for e in events.events:
+            f = e.fields
+            rows.append(
+                (
+                    e.tick,
+                    e.kind.value,
+                    f.get("org_id"),
+                    f.get("parent_id"),
+                    f.get("child_id"),
+                    f.get("cause"),
+                    f.get("genome_hash") or f.get("child_genome_hash"),
+                    f.get("x"),
+                    f.get("y"),
+                )
+            )
+        if not rows:
+            return
+        self._conn.executemany(
+            "INSERT INTO events (tick, kind, org_id, parent_id, child_id, "
+            "cause, genome_hash, x, y) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self._conn.commit()

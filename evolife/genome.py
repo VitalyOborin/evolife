@@ -72,3 +72,18 @@ class Genome:
 
     def active_connections(self) -> Iterable[ConnectionGene]:
         return (c for c in self.connections.values() if c.enabled)
+
+    def fingerprint(self) -> str:
+        """A stable hash of topology + weights for event log dedup."""
+        import hashlib
+
+        node_part = ",".join(
+            f"{n.id}:{n.type.value}:{n.activation.value}:{n.bias:.6f}"
+            for n in sorted(self.nodes.values(), key=lambda x: x.id)
+        )
+        conn_part = ",".join(
+            f"{c.innovation}:{c.in_node}>{c.out_node}:{c.weight:.6f}:{int(c.enabled)}"
+            for c in sorted(self.connections.values(), key=lambda x: x.innovation)
+        )
+        h = hashlib.sha1(f"{node_part}|{conn_part}".encode()).hexdigest()
+        return h[:16]
