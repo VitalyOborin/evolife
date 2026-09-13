@@ -1,8 +1,13 @@
 import numpy as np
 import pytest
 
-from evolife.brain import Brain
+from evolife.brain import Brain, _ITERATIONS
 from evolife.config import N_MOTORS, N_SENSORS
+from evolife.genome import Activation, ConnectionGene, NodeGene, NodeType
+
+
+def test_brain_uses_one_iteration_per_world_tick():
+    assert _ITERATIONS == 1
 
 
 def test_default_brain_forward_shape():
@@ -13,6 +18,16 @@ def test_default_brain_forward_shape():
     assert out.shape == (N_MOTORS,)
     assert np.all(out >= -1.0)
     assert np.all(out <= 1.0)
+
+
+def test_proto_brain_goes_approximately_straight_with_no_smell():
+    """Unstimulated proto-brain: turn≈0, move≈sigmoid(0)=0.5."""
+    rng = np.random.default_rng(0)
+    g = Brain.make_default_genome(rng=rng)
+    brain = Brain(g)
+    out = brain.forward(np.zeros(N_SENSORS, dtype=np.float32))
+    assert abs(float(out[0])) < 0.05
+    assert abs(float(out[1]) - 0.5) < 0.05
 
 
 def test_brain_rejects_wrong_sensor_shape():
@@ -28,9 +43,8 @@ def test_brain_forward_deterministic_with_frozen_weights():
     identical — that's a feature, not a bug.)"""
     g = Brain.make_default_genome()
     brain = Brain(g)
-    sensors = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+    sensors = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     out1 = brain.forward(sensors)
-    # Reset state and call again.
     brain.reset_state()
     out2 = brain.forward(sensors)
     np.testing.assert_allclose(out1, out2, atol=1e-6)
@@ -38,10 +52,7 @@ def test_brain_forward_deterministic_with_frozen_weights():
 
 def test_brain_with_no_connections_returns_zeros():
     """An organism with no connections must not crash; motors are zero."""
-    from evolife.genome import Genome
-
     g = Brain.make_default_genome()
-    # Wipe all connections.
     g.connections.clear()
     brain = Brain(g)
     out = brain.forward(np.ones(N_SENSORS, dtype=np.float32))
@@ -51,33 +62,40 @@ def test_brain_with_no_connections_returns_zeros():
 def test_brain_reflects_disabled_connection():
     """Disabling a connection must change the forward output."""
     g = Brain.make_default_genome()
-    sensors = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+    sensors = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     out_before = Brain(g).forward(sensors)
-    # Disable every connection.
     for c in g.connections.values():
         c.enabled = False
     out_after = Brain(g).forward(sensors)
-    # With everything disabled, motors should be zero (or at least
-    # observably different from out_before).
     assert not np.allclose(out_before, out_after)
 
 
 def test_brain_persistent_state_changes_output_across_ticks():
-    """A brain's state should persist across calls and affect output."""
-    from evolife.genome import ConnectionGene
-
+    """A recurrent hidden node must carry state from one tick to the next."""
     g = Brain.make_default_genome()
+    hidden_id = max(g.nodes.keys()) + 1
+    g.nodes[hidden_id] = NodeGene(
+        id=hidden_id, type=NodeType.HIDDEN, activation=Activation.TANH
+    )
+    sensor_id = next(n.id for n in g.nodes.values() if n.type is NodeType.SENSOR)
+    motor_id = next(n.id for n in g.nodes.values() if n.type is NodeType.MOTOR)
+    g.connections[100] = ConnectionGene(
+        innovation=100, in_node=sensor_id, out_node=hidden_id, weight=2.0, enabled=True
+    )
+    g.connections[101] = ConnectionGene(
+        innovation=101, in_node=hidden_id, out_node=hidden_id, weight=1.5, enabled=True
+    )
+    g.connections[102] = ConnectionGene(
+        innovation=102, in_node=hidden_id, out_node=motor_id, weight=1.0, enabled=True
+    )
     brain = Brain(g)
-    sensors_a = np.array([0.9, 0.0, 0.0, 0.5, 1.0], dtype=np.float32)
+    sensors_a = np.array([0.9, 0.0, 0.0], dtype=np.float32)
     sensors_b = np.zeros(N_SENSORS, dtype=np.float32)
 
-    # Pump sensors_a for several ticks to fill state.
     for _ in range(10):
         brain.forward(sensors_a)
     state_after_a = brain.state.copy()
 
-    # Now pump sensors_b; state should evolve from sensors_a's state,
-    # not from zero.
     for _ in range(3):
         brain.forward(sensors_b)
     state_after_b = brain.state.copy()
@@ -95,25 +113,25 @@ def test_brain_handles_no_connections():
 
 
 def test_brain_supports_arbitrary_topology():
-    """Brain must execute hidden->sensor and motor->hidden correctly."""
-    from evolife.genome import ConnectionGene, NodeGene, NodeType, Activation
-
+    """Brain must execute a hidden node and a recurrent edge without crashing."""
     g = Brain.make_default_genome()
-    # Add a hidden -> hidden connection (a second recurrent edge).
-    hidden_ids = [
-        n.id for n in g.nodes.values() if n.type is NodeType.HIDDEN
-    ]
-    if len(hidden_ids) >= 2:
-        g.connections[100] = ConnectionGene(
-            innovation=100,
-            in_node=hidden_ids[0],
-            out_node=hidden_ids[1],
-            weight=1.5,
-            enabled=True,
-        )
+    hidden_id = max(g.nodes.keys()) + 1
+    g.nodes[hidden_id] = NodeGene(
+        id=hidden_id, type=NodeType.HIDDEN, activation=Activation.TANH
+    )
+    sensor_id = next(n.id for n in g.nodes.values() if n.type is NodeType.SENSOR)
+    motor_id = next(n.id for n in g.nodes.values() if n.type is NodeType.MOTOR)
+    g.connections[100] = ConnectionGene(
+        innovation=100, in_node=sensor_id, out_node=hidden_id, weight=1.5, enabled=True
+    )
+    g.connections[101] = ConnectionGene(
+        innovation=101, in_node=hidden_id, out_node=motor_id, weight=1.0, enabled=True
+    )
+    g.connections[102] = ConnectionGene(
+        innovation=102, in_node=hidden_id, out_node=hidden_id, weight=0.8, enabled=True
+    )
     brain = Brain(g)
-    sensors = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
-    # Run a few ticks; must not raise.
+    sensors = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     for _ in range(5):
         out = brain.forward(sensors)
     assert out.shape == (N_MOTORS,)

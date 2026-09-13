@@ -1,8 +1,8 @@
-"""All EvoLife v0 constants in one place.
+"""All EvoLife constants in one place.
 
 Anything tunable lives here. Modules import names; they never inline numbers.
-This is the single point to evolve when v0 graduates to v1 (real evolution,
-topology mutation enabled, speciation active, etc.).
+v2.2 (Viable Replicator) is a bootstrap stage: a proto-brain that can
+persist for tens of generations so natural selection has time to act.
 """
 
 from __future__ import annotations
@@ -15,14 +15,13 @@ from dataclasses import dataclass
 WORLD_WIDTH: int = 512
 WORLD_HEIGHT: int = 512
 
-# How many food particles exist at any time. World respawns food up to this
-# cap after each tick if any was eaten.
+# How many food particles the world tries to maintain.
 FOOD_TARGET: int = 400
 
-# Probability per cell per tick that a new food particle appears at random.
-# We use sparse spawning on top of FOOD_TARGET for a soft trickle even when
-# the field is empty.
-FOOD_SPAWN_RATE: float = 0.02
+# Per-tick binomial probability that each missing food particle respawns.
+# Expected new food = (FOOD_TARGET - current) * FOOD_REGROWTH_RATE.
+# At half-stock (200/400) this is ~0.4 food/tick; near full, ~0.01/tick.
+FOOD_REGROWTH_RATE: float = 0.002
 
 # Energy gained from eating one food particle.
 FOOD_ENERGY: float = 25.0
@@ -50,12 +49,19 @@ INITIAL_POPULATION: int = 200
 # organism has one meal of buffer against starvation.
 INITIAL_ENERGY: float = FOOD_ENERGY
 
-# Energy threshold above which an organism may reproduce. Energy is split
-# with the offspring, so both parent and child get REPRODUCTION_ENERGY.
-REPRODUCTION_THRESHOLD: float = 60.0
+# Energy threshold above which an organism reproduces. After one successful
+# meal a proto-organism should already be close to replication.
+REPRODUCTION_THRESHOLD: float = 48.0
 
-# Energy transferred to each side (parent + child) on reproduction.
-REPRODUCTION_ENERGY: float = 30.0
+# Energy transferred to the child on reproduction (subtracted from parent).
+REPRODUCTION_ENERGY: float = 24.0
+
+# Offspring spawn this many world units away from the parent, along a
+# slightly jittered heading, so parent and child do not compete on the
+# same food particle from the same pose.
+CHILD_DISPERSAL_MIN: float = 1.0
+CHILD_DISPERSAL_MAX: float = 4.0
+CHILD_HEADING_NOISE: float = 0.2
 
 # Maximum age in ticks. Pure safety net to prevent immortal lineages from
 # monopolising the world even if their energy stays positive forever.
@@ -64,21 +70,27 @@ MAX_AGE: int = 50_000
 
 # --- Brain -----------------------------------------------------------------
 
-# Sensor layout for v2.x (local smell only):
+# Sensor layout for v2.2 proto-brain (local smell only):
 # Index 0: smell_left  in [0, 1] — smell at probe ahead-left.
 # Index 1: smell_front in [0, 1] — smell at probe directly ahead.
 # Index 2: smell_right in [0, 1] — smell at probe ahead-right.
-# Index 3: own_energy in [0, 1] — energy / REPRODUCTION_THRESHOLD.
-# Index 4: bias        = 1.0 (constant).
-N_SENSORS: int = 5
+# Energy and a constant bias sensor are deliberately omitted: NodeGene
+# already has a real bias, and eat/reproduce are automatic.
+N_SENSORS: int = 3
 
-# Motor outputs (v2.x simplification):
+# Motor outputs:
 # Index 0: turn_rate  in [-1, 1]  -> MAX_TURN_RATE (signed).
 # Index 1: move_speed in [0, 1]   -> MAX_LINEAR_SPEED (non-negative).
 # Eat and reproduce are automatic; the brain only evolves navigation.
 N_MOTORS: int = 2
 
-N_HIDDEN: int = 4
+# Founders start with no hidden neurons. Complexity (hidden nodes,
+# recurrence) can appear later via structural mutation.
+N_HIDDEN: int = 0
+
+# Std of initial connection weights. Small enough that a zero-smell
+# input leaves motors near their unbiased activations (turn≈0, move≈0.5).
+INITIAL_WEIGHT_SIGMA: float = 0.05
 
 MAX_LINEAR_SPEED: float = 2.0
 MAX_TURN_RATE: float = 0.3
@@ -109,22 +121,29 @@ CONNECTION_METABOLIC_COST: float = 0.001
 
 # --- Mutation --------------------------------------------------------------
 
-# Per-birth probability of mutating weights.
-WEIGHT_MUTATION_RATE: float = 1.0  # v1: always mutate weights.
+# Per-birth probability of applying the weight-mutation operator.
+WEIGHT_MUTATION_RATE: float = 0.8
 
-# Probability per weight of being perturbed by gaussian noise.
-WEIGHT_PERTURB_RATE: float = 0.9
+# Probability per enabled connection of a small gaussian nudge.
+WEIGHT_PERTURB_RATE: float = 0.10
 
-# Standard deviation of gaussian weight perturbation.
-WEIGHT_PERTURB_SIGMA: float = 0.5
+# Standard deviation of the small gaussian nudge.
+WEIGHT_PERTURB_SIGMA: float = 0.10
+
+# Probability per enabled connection (if not perturbed) of a rare
+# large jump: the weight is redrawn from N(0, WEIGHT_REPLACE_SIGMA).
+WEIGHT_REPLACE_RATE: float = 0.02
+WEIGHT_REPLACE_SIGMA: float = 1.0
 
 # Hard clamp on absolute weight magnitude, post-mutation.
 WEIGHT_MAX: float = 5.0
 
-# Per-birth probability of structural mutations. v1 turns these on.
-ADD_NODE_RATE: float = 0.03
-ADD_CONNECTION_RATE: float = 0.05
-TOGGLE_CONNECTION_RATE: float = 0.01
+# Per-birth probability of structural mutations. Kept rare until a
+# food-seeking population is stable — first prove weights of the
+# proto-brain can evolve.
+ADD_NODE_RATE: float = 0.002
+ADD_CONNECTION_RATE: float = 0.005
+TOGGLE_CONNECTION_RATE: float = 0.002
 
 
 # --- Selection (natural) ---------------------------------------------------

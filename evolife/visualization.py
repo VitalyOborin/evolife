@@ -25,7 +25,7 @@ class Visualizer:
         self.screen = pygame.display.set_mode(
             (world.width, world.height)
         )
-        pygame.display.set_caption("EvoLife v0")
+        pygame.display.set_caption("EvoLife v2.2")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Consolas", 14)
 
@@ -57,7 +57,9 @@ class Visualizer:
         hud = self.font.render(
             f"tick={self.world.tick}  pop={self.world.population()}  "
             f"food={len(self.world.food)}  "
-            f"meanE={self.world.mean_energy():.1f}",
+            f"meanE={self.world.mean_energy():.1f}  "
+            f"maxGen={self.world.max_generation()}  "
+            f"lin={self.world.n_lineages()}",
             True,
             (255, 255, 255),
         )

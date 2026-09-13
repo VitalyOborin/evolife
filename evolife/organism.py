@@ -29,3 +29,6 @@ class Organism:
     parent_id: int | None = None
     children: int = 0
     peak_energy: float = 0.0
+    generation: int = 0
+    founder_lineage_id: int = 0
+    food_eaten: int = 0

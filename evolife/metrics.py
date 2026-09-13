@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS organism_snapshots (
     children     INTEGER NOT NULL,
     genome_nodes INTEGER NOT NULL,
     genome_conns INTEGER NOT NULL,
+    generation   INTEGER NOT NULL,
+    founder_lineage_id INTEGER NOT NULL,
+    food_eaten   INTEGER NOT NULL,
     alive        INTEGER NOT NULL,
     PRIMARY KEY (tick, organism_id)
 );
@@ -61,7 +64,24 @@ class Metrics:
         self.path = path
         self._conn = sqlite3.connect(path)
         self._conn.executescript(_SCHEMA)
+        self._migrate_organism_snapshots()
         self._conn.commit()
+
+    def _migrate_organism_snapshots(self) -> None:
+        """Add v2.2 columns to organism_snapshots if an older DB is reused."""
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(organism_snapshots)")
+        }
+        for name, spec in (
+            ("generation", "INTEGER NOT NULL DEFAULT 0"),
+            ("founder_lineage_id", "INTEGER NOT NULL DEFAULT 0"),
+            ("food_eaten", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in cols:
+                self._conn.execute(
+                    f"ALTER TABLE organism_snapshots ADD COLUMN {name} {spec}"
+                )
 
     def close(self) -> None:
         self._conn.close()
@@ -99,12 +119,18 @@ class Metrics:
                     o.children,
                     len(o.genome.nodes),
                     len(o.genome.connections),
+                    o.generation,
+                    o.founder_lineage_id,
+                    o.food_eaten,
                     int(o.alive),
                 )
             )
         self._conn.executemany(
-            "INSERT OR REPLACE INTO organism_snapshots VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO organism_snapshots ("
+            "tick, organism_id, parent_id, age, energy, peak_energy, "
+            "children, genome_nodes, genome_conns, generation, "
+            "founder_lineage_id, food_eaten, alive"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self._conn.commit()

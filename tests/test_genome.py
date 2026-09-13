@@ -16,11 +16,11 @@ def test_make_default_genome_shape():
     sensor_ids = {n.id for n in g.sensors()}
     motor_ids = {n.id for n in g.motors()}
     hidden_ids = {n.id for n in g.nodes.values() if n.type is NodeType.HIDDEN}
-    assert len(sensor_ids) == 5
-    assert len(motor_ids) == 2  # turn + move only (v2.x)
-    assert len(hidden_ids) == 4
+    assert len(sensor_ids) == 3
+    assert len(motor_ids) == 2
+    assert len(hidden_ids) == 0
+    assert len(g.connections) == 6
     assert sensor_ids.isdisjoint(motor_ids)
-    assert sensor_ids.isdisjoint(hidden_ids)
 
 
 def test_node_types_match_activation():

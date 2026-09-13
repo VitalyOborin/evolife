@@ -32,6 +32,8 @@ def main() -> None:
             f"ticks={args.ticks}  elapsed={elapsed:.2f}s  "
             f"rate={rate:.1f} ticks/s  "
             f"final_pop={world.population()}  "
+            f"max_gen={world.max_generation()}  "
+            f"lineages={world.n_lineages()}  "
             f"final_mean_energy={world.mean_energy():.2f}  "
             f"events={len(world.events.events)}  "
             f"births={len(by_kind['birth'])}  "

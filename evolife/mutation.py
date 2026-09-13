@@ -29,6 +29,8 @@ from .config import (
     WEIGHT_MUTATION_RATE,
     WEIGHT_PERTURB_RATE,
     WEIGHT_PERTURB_SIGMA,
+    WEIGHT_REPLACE_RATE,
+    WEIGHT_REPLACE_SIGMA,
 )
 from .genome import (
     Activation,
@@ -49,12 +51,16 @@ def mutate_weights(
     rate: float = WEIGHT_MUTATION_RATE,
     perturb_rate: float = WEIGHT_PERTURB_RATE,
     sigma: float = WEIGHT_PERTURB_SIGMA,
+    replace_rate: float = WEIGHT_REPLACE_RATE,
+    replace_sigma: float = WEIGHT_REPLACE_SIGMA,
 ) -> Genome:
-    """Return a new genome with perturbed weights.
+    """Return a new genome with mostly-inherited, slightly varied weights.
 
-    Each enabled connection is independently perturbed with probability
-    `perturb_rate`. With probability `rate` the whole operator is applied
-    at all; otherwise the genome is returned unchanged.
+    With probability `rate` the operator runs at all. Each enabled
+    connection then independently:
+      - with `perturb_rate`, adds N(0, sigma);
+      - else with `replace_rate`, is redrawn from N(0, replace_sigma).
+    Most weights are left untouched so a working phenotype is inherited.
     """
     if rng.random() >= rate:
         return genome
@@ -67,6 +73,14 @@ def mutate_weights(
             conn.weight = float(
                 np.clip(
                     conn.weight + rng.normal(0.0, sigma),
+                    -WEIGHT_MAX,
+                    WEIGHT_MAX,
+                )
+            )
+        elif rng.random() < replace_rate:
+            conn.weight = float(
+                np.clip(
+                    rng.normal(0.0, replace_sigma),
                     -WEIGHT_MAX,
                     WEIGHT_MAX,
                 )

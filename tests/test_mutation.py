@@ -22,7 +22,9 @@ def test_mutate_weights_changes_some_weights_with_rate_one():
     g.connections[1000] = ConnectionGene(
         innovation=1000, in_node=0, out_node=5, weight=1.0, enabled=True
     )
-    mutated = mutate_weights(g, np.random.default_rng(0), rate=1.0)
+    mutated = mutate_weights(
+        g, np.random.default_rng(0), rate=1.0, perturb_rate=1.0
+    )
     assert mutated is not g
     assert mutated.connections[1000].weight != 1.0
 

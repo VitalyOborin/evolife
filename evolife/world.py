@@ -1,18 +1,16 @@
 """World — the simulation driver.
 
-v2 (Natural Selection Baseline):
+v2.2 (Viable Replicator):
 
 - No tournament. No external fitness function. Selection = "did you eat
   enough to not starve and to afford reproduction?"
-- Recurrent brains: each organism owns persistent brain_state across
-  ticks. Connections of any topology (including cycles, hidden->sensor,
-  motor->hidden) are valid because the executor computes
-      values_next = activation(bias + sum_i(values_i * w))
-  in a fixed-point-ish way that preserves information across ticks.
-- Local smell sensors: three sectors (left/front/right) sampled from a
-  precomputed smell field. No GPS, no nearest-food lookup.
+- Proto-brain: 3 smell sensors wired to 2 motors, no hidden neurons
+  and no gifted memory. Complexity can arise via structural mutation.
+- Local smell sensors: three probe points (left/front/right). No GPS,
+  no energy/bias sensors, no nearest-food lookup.
 - Metabolic cost: each neuron and active connection drains a small
   amount of energy per tick. Bigger brains are more expensive.
+- Food respawns in proportion to how far the field is below target.
 - Event log: append-only Birth/Death/Reproduction events so the lineage
   tree can be reconstructed.
 """
@@ -26,12 +24,13 @@ import numpy as np
 
 from .brain import Brain
 from .config import (
-    ADD_CONNECTION_RATE,
-    ADD_NODE_RATE,
+    CHILD_DISPERSAL_MAX,
+    CHILD_DISPERSAL_MIN,
+    CHILD_HEADING_NOISE,
     CONNECTION_METABOLIC_COST,
     EAT_RADIUS,
     FOOD_ENERGY,
-    FOOD_SPAWN_RATE,
+    FOOD_REGROWTH_RATE,
     FOOD_TARGET,
     IDLE_ENERGY_COST,
     INITIAL_ENERGY,
@@ -41,12 +40,10 @@ from .config import (
     MAX_TURN_RATE,
     MOVE_ENERGY_COST,
     NEURON_METABOLIC_COST,
-    N_SENSORS,
     POPULATION_CAP,
     REPRODUCTION_ENERGY,
     REPRODUCTION_THRESHOLD,
     SMELL_HALF_ANGLE,
-    TOGGLE_CONNECTION_RATE,
     TURN_ENERGY_COST,
     WORLD_HEIGHT,
     WORLD_WIDTH,
@@ -130,6 +127,8 @@ class World:
             energy=INITIAL_ENERGY,
             brain=brain,
             genome=genome,
+            generation=0,
+            founder_lineage_id=oid,
         )
         self.organisms.append(org)
         self.events.record_birth(
@@ -142,9 +141,12 @@ class World:
         """Advance one tick."""
         self.tick += 1
 
-        # 1. Spawn food up to target.
-        while len(self.food) < FOOD_TARGET and self.rng.random() < FOOD_SPAWN_RATE:
-            self._spawn_food()
+        # 1. Regrow food in proportion to the deficit vs FOOD_TARGET.
+        missing = FOOD_TARGET - len(self.food)
+        if missing > 0:
+            n_new = int(self.rng.binomial(missing, FOOD_REGROWTH_RATE))
+            for _ in range(n_new):
+                self._spawn_food()
 
         # 2. Recompute smell field for this tick.
         self.smell.recompute(self.food)
@@ -213,21 +215,10 @@ class World:
         # No motor required.
 
     def _sensors_for(self, org: Organism) -> np.ndarray:
-        """Local smell sensors: left, front, right sectors + energy + bias."""
-        # Smell field sampling. SmellField.sample returns intensities for
-        # sectors at the organism's position.
+        """Local smell sensors: left, front, right. Nothing else."""
         smells = self.smell.sample(org.x, org.y, org.heading, SMELL_HALF_ANGLE)
-        # smells shape: (3,) in [0, 1].
-        energy_norm = float(np.clip(org.energy / REPRODUCTION_THRESHOLD, 0.0, 1.0))
-        bias = 1.0
         return np.array(
-            [
-                float(smells[0]),
-                float(smells[1]),
-                float(smells[2]),
-                energy_norm,
-                bias,
-            ],
+            [float(smells[0]), float(smells[1]), float(smells[2])],
             dtype=np.float32,
         )
 
@@ -263,6 +254,7 @@ class World:
             if float(dist[idx]) <= EAT_RADIUS:
                 eaten_food = self.food.pop(idx)
                 org.energy += FOOD_ENERGY
+                org.food_eaten += 1
                 out.append((org, (eaten_food.x, eaten_food.y)))
         return out
 
@@ -289,15 +281,26 @@ class World:
 
             org.energy -= REPRODUCTION_ENERGY
             child_id = self._next_organism_id()
+            child_heading = float(
+                (org.heading + self.rng.normal(0.0, CHILD_HEADING_NOISE))
+                % (2 * np.pi)
+            )
+            distance = float(
+                self.rng.uniform(CHILD_DISPERSAL_MIN, CHILD_DISPERSAL_MAX)
+            )
+            child_x = (org.x + math.cos(child_heading) * distance) % self.width
+            child_y = (org.y + math.sin(child_heading) * distance) % self.height
             child = Organism(
                 id=child_id,
-                x=float(org.x),
-                y=float(org.y),
-                heading=float(org.heading),
+                x=child_x,
+                y=child_y,
+                heading=child_heading,
                 energy=REPRODUCTION_ENERGY,
                 brain=Brain(child_genome),
                 genome=child_genome,
                 parent_id=org.id,
+                generation=org.generation + 1,
+                founder_lineage_id=org.founder_lineage_id,
             )
             new_organisms.append(child)
             org.children += 1
@@ -326,3 +329,14 @@ class World:
         if not alive:
             return 0.0
         return float(np.mean([o.energy for o in alive]))
+
+    def max_generation(self) -> int:
+        alive = [o for o in self.organisms if o.alive]
+        if not alive:
+            return 0
+        return max(o.generation for o in alive)
+
+    def n_lineages(self) -> int:
+        return len(
+            {o.founder_lineage_id for o in self.organisms if o.alive}
+        )

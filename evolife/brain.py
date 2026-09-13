@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .config import N_HIDDEN, N_MOTORS, N_SENSORS
+from .config import INITIAL_WEIGHT_SIGMA, N_HIDDEN, N_MOTORS, N_SENSORS
 from .genome import (
     Activation,
     ConnectionGene,
@@ -37,11 +37,10 @@ _ACT_TANH = 1
 _ACT_SIGMOID = 2
 _ACT_RELU = 3
 
-# Number of refinement iterations per forward pass. 1 is enough for
-# strictly feed-forward networks; arbitrary topologies (cycles,
-# motor->hidden, etc.) need more for information to propagate. 3 is a
-# good default for small (~20 node) brains.
-_ITERATIONS = 3
+# One brain update per world tick. Extra iterations push a recurrent
+# net toward its attractor inside a single physical step and decouple
+# internal time from world time. Motor lag of one tick is intended.
+_ITERATIONS = 1
 
 
 def _activation_id(a: Activation) -> int:
@@ -137,19 +136,19 @@ class Brain:
         n_motors: int = N_MOTORS,
         rng: np.random.Generator | None = None,
     ) -> Genome:
-        """Construct a minimal NEAT-shaped genome with recurrent edges.
+        """Construct a proto-brain: sensors wired straight to motors.
 
-        Topology: 5 sensors -> 4 hidden (with mutual recurrent edges)
-        -> 2 motors (turn, move). The recurrent edges give the brain
-        actual memory from birth. Without them the network is feed-
-        forward and cannot maintain state across ticks.
+        Default v2.2 topology is 3 smell sensors, 0 hidden, 2 motors,
+        6 connections. Weights are tiny (N(0, INITIAL_WEIGHT_SIGMA))
+        and motor biases are 0, so with no smell the organism walks
+        approximately straight (turn≈0, move≈sigmoid(0)=0.5).
 
-        If `rng` is provided, initial weights are sampled from it; this
-        gives each founder a different starting brain, which is
-        essential for natural selection to have anything to work with.
-        If `rng` is None, weights are sampled from a fresh default RNG
-        (so two calls still differ — they just won't be reproducible
-        across processes).
+        Hidden neurons and recurrent edges are not gifted; they can
+        appear later via structural mutation.
+
+        If `rng` is provided, initial weights are sampled from it so
+        each founder differs. If `rng` is None, a fresh default RNG
+        is used.
         """
         if rng is None:
             rng = np.random.default_rng()
@@ -170,58 +169,44 @@ class Brain:
             hidden_ids.append(nid)
         motor_ids: list[int] = []
         # Motor 0 (turn rate) is signed -> TANH. Motor 1 (move speed)
-        # is non-negative -> SIGMOID. In v2.x brain only outputs turn
-        # and move; eat/reproduce are automatic.
+        # is non-negative -> SIGMOID. Biases stay 0 so an unstimulated
+        # proto-brain goes roughly straight at half speed.
         for i in range(n_motors):
             nid = len(g.nodes)
             act = Activation.TANH if i == 0 else Activation.SIGMOID
             g.nodes[nid] = NodeGene(
-                id=nid, type=NodeType.MOTOR, activation=act
+                id=nid,
+                type=NodeType.MOTOR,
+                activation=act,
+                bias=0.0,
             )
             motor_ids.append(nid)
 
+        layer_in = sensor_ids
+        layer_out = hidden_ids if hidden_ids else motor_ids
         innov = 0
-        for s in sensor_ids:
+        sigma = INITIAL_WEIGHT_SIGMA
+        for src in layer_in:
+            for dst in layer_out:
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=src,
+                    out_node=dst,
+                    weight=float(rng.normal(0, sigma)),
+                    enabled=True,
+                )
+                innov += 1
+        if hidden_ids:
             for h in hidden_ids:
-                g.connections[innov] = ConnectionGene(
-                    innovation=innov,
-                    in_node=s,
-                    out_node=h,
-                    weight=float(rng.normal(0, 1.0)),
-                    enabled=True,
-                )
-                innov += 1
-        for h in hidden_ids:
-            for m in motor_ids:
-                g.connections[innov] = ConnectionGene(
-                    innovation=innov,
-                    in_node=h,
-                    out_node=m,
-                    weight=float(rng.normal(0, 1.0)),
-                    enabled=True,
-                )
-                innov += 1
-        # Two recurrent edges between hidden[0] and hidden[1] so the
-        # brain has actual memory from birth (a true cycle, not just
-        # one feed-forward edge).
-        if len(hidden_ids) >= 2:
-            a, b = hidden_ids[0], hidden_ids[1]
-            g.connections[innov] = ConnectionGene(
-                innovation=innov,
-                in_node=a,
-                out_node=b,
-                weight=float(rng.normal(0, 0.5)),
-                enabled=True,
-            )
-            innov += 1
-            g.connections[innov] = ConnectionGene(
-                innovation=innov,
-                in_node=b,
-                out_node=a,
-                weight=float(rng.normal(0, 0.5)),
-                enabled=True,
-            )
-            innov += 1
+                for m in motor_ids:
+                    g.connections[innov] = ConnectionGene(
+                        innovation=innov,
+                        in_node=h,
+                        out_node=m,
+                        weight=float(rng.normal(0, sigma)),
+                        enabled=True,
+                    )
+                    innov += 1
         g.max_innovation = innov
         return g
 
