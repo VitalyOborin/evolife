@@ -135,14 +135,24 @@ class Brain:
         n_sensors: int = N_SENSORS,
         n_hidden: int = N_HIDDEN,
         n_motors: int = N_MOTORS,
+        rng: np.random.Generator | None = None,
     ) -> Genome:
-        """Construct a minimal NEAT-shaped genome with one recurrent edge.
+        """Construct a minimal NEAT-shaped genome with recurrent edges.
 
-        The recurrent edge between two hidden nodes gives the brain
-        actual memory from birth. Without it the network is feed-forward
-        and cannot maintain state across ticks — the experiment would
-        collapse to a single-tick reaction.
+        Topology: 5 sensors -> 4 hidden (with mutual recurrent edges)
+        -> 2 motors (turn, move). The recurrent edges give the brain
+        actual memory from birth. Without them the network is feed-
+        forward and cannot maintain state across ticks.
+
+        If `rng` is provided, initial weights are sampled from it; this
+        gives each founder a different starting brain, which is
+        essential for natural selection to have anything to work with.
+        If `rng` is None, weights are sampled from a fresh default RNG
+        (so two calls still differ — they just won't be reproducible
+        across processes).
         """
+        if rng is None:
+            rng = np.random.default_rng()
         g = Genome()
         sensor_ids: list[int] = []
         for _ in range(n_sensors):
@@ -159,11 +169,9 @@ class Brain:
             )
             hidden_ids.append(nid)
         motor_ids: list[int] = []
-        # Motor 0 (turn rate) is signed -> TANH. Motors 1..N (move
-        # speed, eat_attempt, reproduce_attempt) are non-negative
-        # intensities -> SIGMOID. Using TANH for non-negative motors
-        # would silently zero out half the output range (clip(0,1)
-        # below), so we set the activation to match the semantics.
+        # Motor 0 (turn rate) is signed -> TANH. Motor 1 (move speed)
+        # is non-negative -> SIGMOID. In v2.x brain only outputs turn
+        # and move; eat/reproduce are automatic.
         for i in range(n_motors):
             nid = len(g.nodes)
             act = Activation.TANH if i == 0 else Activation.SIGMOID
@@ -173,7 +181,6 @@ class Brain:
             motor_ids.append(nid)
 
         innov = 0
-        rng = np.random.default_rng(0)
         for s in sensor_ids:
             for h in hidden_ids:
                 g.connections[innov] = ConnectionGene(
@@ -194,12 +201,23 @@ class Brain:
                     enabled=True,
                 )
                 innov += 1
+        # Two recurrent edges between hidden[0] and hidden[1] so the
+        # brain has actual memory from birth (a true cycle, not just
+        # one feed-forward edge).
         if len(hidden_ids) >= 2:
             a, b = hidden_ids[0], hidden_ids[1]
             g.connections[innov] = ConnectionGene(
                 innovation=innov,
                 in_node=a,
                 out_node=b,
+                weight=float(rng.normal(0, 0.5)),
+                enabled=True,
+            )
+            innov += 1
+            g.connections[innov] = ConnectionGene(
+                innovation=innov,
+                in_node=b,
+                out_node=a,
                 weight=float(rng.normal(0, 0.5)),
                 enabled=True,
             )

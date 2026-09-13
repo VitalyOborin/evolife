@@ -113,7 +113,8 @@ class World:
         )
 
     def _spawn_founder(self) -> None:
-        genome = Brain.make_default_genome()
+        # Pass the world's RNG so each founder has different weights.
+        genome = Brain.make_default_genome(rng=self.rng)
         for c in genome.connections.values():
             self.innovations.innovation_for(c.in_node, c.out_node)
         genome.max_innovation = max(
@@ -197,8 +198,9 @@ class World:
         assert org.brain is not None
         motors = org.brain.forward(sensors)
 
+        # Motors: [turn_rate (signed), move_speed (>= 0)].
         turn = float(motors[0]) * MAX_TURN_RATE
-        move = float(np.clip(motors[1], 0.0, 1.0)) * MAX_LINEAR_SPEED
+        move = float(motors[1]) * MAX_LINEAR_SPEED
 
         org.energy -= abs(turn) * TURN_ENERGY_COST
         org.energy -= move * MOVE_ENERGY_COST
@@ -207,8 +209,8 @@ class World:
         org.x = (org.x + np.cos(org.heading) * move) % self.width
         org.y = (org.y + np.sin(org.heading) * move) % self.height
 
-        org._eat_attempt = bool(float(motors[2]) > 0.5)  # type: ignore[attr-defined]
-        org._reproduce_attempt = bool(float(motors[3]) > 0.5)  # type: ignore[attr-defined]
+        # Automatic contact eating: any food within EAT_RADIUS is eaten.
+        # No motor required.
 
     def _sensors_for(self, org: Organism) -> np.ndarray:
         """Local smell sensors: left, front, right sectors + energy + bias."""
@@ -232,16 +234,21 @@ class World:
     # --- resolution --------------------------------------------------------
 
     def _resolve_eat(self) -> list[tuple[Organism, tuple[float, float]]]:
-        """For each organism that wants to eat, consume the nearest food.
+        """Automatic contact eating: nearest food within EAT_RADIUS.
 
-        Returns a list of (organism, food_pos) pairs so the caller can log
-        Eat events.
+        No brain decision required. The brain only controls turn and
+        move; once the organism happens to be close enough to food, it
+        eats. This is the v2.x simplification: the brain evolves
+        navigation, not the decision to eat.
+
+        Returns a list of (organism, food_pos) pairs so the caller can
+        log Eat events.
         """
         out: list[tuple[Organism, tuple[float, float]]] = []
         if not self.food:
             return out
         for org in self.organisms:
-            if not org.alive or not getattr(org, "_eat_attempt", False):
+            if not org.alive:
                 continue
             if not self.food:
                 break
@@ -260,13 +267,17 @@ class World:
         return out
 
     def _reproduce(self) -> None:
+        """Automatic energy-based reproduction.
+
+        No brain decision required. Once an organism's energy exceeds
+        REPRODUCTION_THRESHOLD it splits into two: parent keeps the
+        excess above the threshold, child starts with REPRODUCTION_ENERGY.
+        """
         if len(self.organisms) >= POPULATION_CAP:
             return
         new_organisms: list[Organism] = []
         for org in self.organisms:
             if not org.alive:
-                continue
-            if not getattr(org, "_reproduce_attempt", False):
                 continue
             if org.energy < REPRODUCTION_THRESHOLD:
                 continue

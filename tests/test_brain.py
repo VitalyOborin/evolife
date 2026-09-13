@@ -23,12 +23,17 @@ def test_brain_rejects_wrong_sensor_shape():
 
 
 def test_brain_forward_deterministic_with_frozen_weights():
+    """A fresh brain called twice with the same sensors must give the
+    same output. (Persistent state means subsequent calls would not be
+    identical — that's a feature, not a bug.)"""
     g = Brain.make_default_genome()
     brain = Brain(g)
     sensors = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
     out1 = brain.forward(sensors)
+    # Reset state and call again.
+    brain.reset_state()
     out2 = brain.forward(sensors)
-    np.testing.assert_array_equal(out1, out2)
+    np.testing.assert_allclose(out1, out2, atol=1e-6)
 
 
 def test_brain_with_no_connections_returns_zeros():

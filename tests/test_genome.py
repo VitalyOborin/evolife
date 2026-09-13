@@ -17,7 +17,7 @@ def test_make_default_genome_shape():
     motor_ids = {n.id for n in g.motors()}
     hidden_ids = {n.id for n in g.nodes.values() if n.type is NodeType.HIDDEN}
     assert len(sensor_ids) == 5
-    assert len(motor_ids) == 4
+    assert len(motor_ids) == 2  # turn + move only (v2.x)
     assert len(hidden_ids) == 4
     assert sensor_ids.isdisjoint(motor_ids)
     assert sensor_ids.isdisjoint(hidden_ids)
@@ -31,13 +31,10 @@ def test_node_types_match_activation():
     sensors = g.sensors()
     motors = g.motors()
     assert all(s.activation is Activation.LINEAR for s in sensors)
-    # Motor 0 is TANH (signed turn rate). Motors 1..N are SIGMOID
-    # (non-negative intensities: speed, eat_attempt, reproduce_attempt).
+    # Motor 0 is TANH (signed turn rate). Motor 1 is SIGMOID
+    # (non-negative move speed).
     assert motors[0].activation is Activation.TANH
-    assert all(
-        m.activation is Activation.SIGMOID
-        for m in motors[1:]
-    )
+    assert motors[1].activation is Activation.SIGMOID
 
 
 def test_active_connections_only_enabled():

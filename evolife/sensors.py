@@ -77,58 +77,41 @@ class SmellField:
     def sample(
         self, x: float, y: float, heading: float, half_angle: float
     ) -> np.ndarray:
-        """Sample smell intensity in three sectors: left, front, right.
+        """Sample smell intensity at three probe points: L, F, R.
+
+        Each probe is a single field-cell sample at a fixed distance
+        PROBE_DISTANCE ahead of the organism in the corresponding
+        direction. This preserves gradient information: food at the
+        probe point yields a high reading, food farther away yields a
+        lower reading, food absent yields zero.
 
         Returns float32 array of shape (3,) with each value in [0, 1].
-        Each sector is a +/-half_angle wedge around its direction.
         """
-        R = self.radius
-        cx = int(round(x))
-        cy = int(round(y))
-        x0 = max(0, cx - R)
-        x1 = min(self.width, cx + R + 1)
-        y0 = max(0, cy - R)
-        y1 = min(self.height, cy + R + 1)
-        if x0 >= x1 or y0 >= y1:
-            return np.zeros(3, dtype=np.float32)
-
-        sub = self.grid[y0:y1, x0:x1]
-        ys, xs = np.mgrid[y0 - cy:y1 - cy, x0 - cx:x1 - cx]
-        norm = np.hypot(xs, ys)
-        valid = norm > 0.5
-        ux = np.zeros_like(xs, dtype=np.float32)
-        uy = np.zeros_like(ys, dtype=np.float32)
-        ux[valid] = xs[valid] / norm[valid]
-        uy[valid] = ys[valid] / norm[valid]
-
+        # Distance ahead of the organism at which we sample smell.
+        # Must be <= SMELL_FIELD_RADIUS.
+        PROBE_DISTANCE = 8.0
         cos_thresh = math.cos(half_angle)
 
-        def sector_value(dx: float, dy: float) -> float:
-            dot = ux * dx + uy * dy
-            mask = valid & (dot >= cos_thresh)
-            if not mask.any():
-                return 0.0
-            return float(sub[mask].sum())
+        def probe(angle_offset: float) -> float:
+            ang = heading + angle_offset
+            sx = (x + PROBE_DISTANCE * math.cos(ang)) % self.width
+            sy = (y + PROBE_DISTANCE * math.sin(ang)) % self.height
+            v = float(self.grid[int(sy) % self.height, int(sx) % self.width])
+            return v
 
-        left_dir = (
-            math.cos(heading - half_angle),
-            math.sin(heading - half_angle),
-        )
-        front_dir = (math.cos(heading), math.sin(heading))
-        right_dir = (
-            math.cos(heading + half_angle),
-            math.sin(heading + half_angle),
-        )
-        left_v = sector_value(*left_dir)
-        front_v = sector_value(*front_dir)
-        right_v = sector_value(*right_dir)
-        # Squash into [0, 1] — kernel max is 1.0 at distance 0; summing
-        # can exceed 1 in dense regions.
+        left_v = probe(-half_angle)
+        front_v = probe(0.0)
+        right_v = probe(+half_angle)
+        # Soft saturation: 1 - exp(-k*v). With k=3, v=0.3 -> 0.59,
+        # v=1.0 -> 0.95, v=10 -> 1.0 (asymptote). This prevents total
+        # saturation in dense food regions while keeping low values
+        # informative.
+        k = 3.0
         return np.array(
             [
-                min(1.0, left_v),
-                min(1.0, front_v),
-                min(1.0, right_v),
+                1.0 - math.exp(-k * left_v),
+                1.0 - math.exp(-k * front_v),
+                1.0 - math.exp(-k * right_v),
             ],
             dtype=np.float32,
         )

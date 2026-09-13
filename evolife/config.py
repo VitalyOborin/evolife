@@ -64,20 +64,19 @@ MAX_AGE: int = 50_000
 
 # --- Brain -----------------------------------------------------------------
 
-# Sensor layout for v2 (local smell only):
-# Index 0: smell_left  in [0, 1] — smell intensity in left sector.
-# Index 1: smell_front in [0, 1] — smell intensity in front sector.
-# Index 2: smell_right in [0, 1] — smell intensity in right sector.
+# Sensor layout for v2.x (local smell only):
+# Index 0: smell_left  in [0, 1] — smell at probe ahead-left.
+# Index 1: smell_front in [0, 1] — smell at probe directly ahead.
+# Index 2: smell_right in [0, 1] — smell at probe ahead-right.
 # Index 3: own_energy in [0, 1] — energy / REPRODUCTION_THRESHOLD.
 # Index 4: bias        = 1.0 (constant).
 N_SENSORS: int = 5
 
-# Motor outputs (unchanged from v0):
-# Index 0: turn_rate     in [-1, 1] -> MAX_TURN_RATE.
-# Index 1: move_speed    in [0, 1]  -> MAX_LINEAR_SPEED.
-# Index 2: eat_attempt   > 0.5 means try to eat (within EAT_RADIUS).
-# Index 3: reproduce_attempt > 0.5 means try to reproduce.
-N_MOTORS: int = 4
+# Motor outputs (v2.x simplification):
+# Index 0: turn_rate  in [-1, 1]  -> MAX_TURN_RATE (signed).
+# Index 1: move_speed in [0, 1]   -> MAX_LINEAR_SPEED (non-negative).
+# Eat and reproduce are automatic; the brain only evolves navigation.
+N_MOTORS: int = 2
 
 N_HIDDEN: int = 4
 
@@ -134,7 +133,8 @@ TOGGLE_CONNECTION_RATE: float = 0.01
 # don't die. Reproduction happens automatically when energy exceeds
 # REPRODUCTION_THRESHOLD. No tournament, no ranking, no comparison.
 # Selection is purely "did you eat enough to not starve and to afford
-# reproduction?"
+# reproduction?" Eating is also automatic on contact; the brain evolves
+# navigation, not decisions.
 
 
 # --- Visualisation ---------------------------------------------------------
