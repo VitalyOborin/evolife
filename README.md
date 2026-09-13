@@ -7,35 +7,42 @@ A digital organism simulation. The question this experiment asks is not
 > mutable genome, generate pressure that makes nervous systems more
 > complex on their own?
 
-## V0 (this iteration)
+## Status
 
-A scaffold only. No evolution yet — just a world where organisms with
-fixed-topology brains eat, move, reproduce and die, so we can see the
-plumbing work before we let selection run.
+### V0 — scaffold (committed)
 
-- 2D continuous world, 512×512, food particles respawn up to a cap.
-- ~500 organisms, Pygame top-down visualiser, NumPy on CPU.
-- Genome is NEAT-shaped from day one (innovation numbers, structural
-  mutations defined) but v0 only mutates weights.
-- Only food and starvation. No poison, no day/night cycle. Pressure on
-  complexity comes from metabolic cost of the brain itself, not from
-  external tricks.
+10 000 headless ticks, seed 42, no evolution: population collapses to
+zero as expected (frozen random brains cannot reliably find food).
+Throughput: 614 ticks/s.
 
-## Baseline (this commit)
+### V1 — microbial tournament + structural mutations (committed)
 
-10 000 headless ticks, seed 42, no evolution (founder brains have
-frozen random weights):
+20 000 headless ticks, seed 42, evolution on:
 
 ```
-ticks=10000  elapsed=16.28s  rate=614.2 ticks/s
-final_pop=0  final_mean_energy=0.00
+ticks=20000  elapsed=183.88s  rate=108.8 ticks/s
+final_pop=2  final_mean_energy=2308.73
 ```
 
-Population collapses to zero somewhere between tick 50 and tick 5050.
-This is expected and is the v0 baseline we want: without selection,
-random brains cannot reliably find food, and founder energy drains
-faster than replenishment. Once we flip the evolution switch in v1, we
-expect this curve to invert.
+**Observation:** population collapses from 200 to 2 around tick 5000.
+The two survivors are NOT the result of selection — they survived
+because no rival was within TOURNAMENT_RADIUS. Mean energy of the two
+climbs monotonically because they have the world to themselves. Genome
+size grows modestly: avg connections 36.6, max 44 (start = 36).
+
+**Diagnosis:** tournament kills faster than reproduction replaces. With
+TOURNAMENT_KILL_RATE=0.8 and TOURNAMENT_EVERY=50 ticks, every 50 ticks
+half the population loses a member, while reproduction only fires when
+an organism's brain outputs reproduce_attempt > 0.5 AND it has
+REPRODUCTION_THRESHOLD=60 energy. Brains rarely hit both.
+
+**Next levers for v2:**
+1. Lower REPRODUCTION_THRESHOLD so more organisms reproduce.
+2. Lower TOURNAMENT_KILL_RATE so tournament is softer.
+3. Add speciation (NEAT-style compatibility distance) so similar
+   organisms don't compete directly and structural diversity persists.
+4. Vectorise tournament and reproduction with numpy/PyTorch for
+   10x+ throughput.
 
 ## Hard constraints (do not break)
 
@@ -51,19 +58,21 @@ expect this curve to invert.
 
 ```
 evolife/
-  config.py          # all v0 constants
+  config.py          # all v0/v1 constants
   genome.py          # NEAT-shaped Genome (nodes, connections, innovations)
+  innovation.py      # global innovation counter (v1)
   brain.py           # feedforward net built from a Genome
   organism.py        # position, energy, age, brain, genome
-  world.py           # tick(), spawn_food(), reproduce()
-  mutation.py        # all four mutations defined; v0 uses only weight perturb
-  speciation.py      # compatibility distance (v0: always one species)
+  world.py           # tick(), spawn_food(), reproduce(), tournament()
+  mutation.py        # weights, add_node, add_connection, toggle
+  speciation.py      # compatibility distance (v0: one bucket)
   metrics.py         # per-organism and per-world metrics into SQLite
   visualization.py   # Pygame top-down renderer
 scripts/
   run_visual.py      # run with Pygame
   run_headless.py    # run N ticks headless, write metrics
 tests/
+  test_innovation.py
   test_genome.py
   test_brain.py
   test_world.py
@@ -75,6 +84,6 @@ tests/
 ```
 pip install -e .
 python scripts/run_visual.py
-python scripts/run_headless.py --ticks 10000 --seed 42
+python scripts/run_headless.py --ticks 20000 --seed 42
 pytest -q
 ```

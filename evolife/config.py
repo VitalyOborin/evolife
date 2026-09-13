@@ -103,7 +103,7 @@ COLLISION_RADIUS: float = 3.0
 # --- Mutation --------------------------------------------------------------
 
 # Per-birth probability of mutating weights.
-WEIGHT_MUTATION_RATE: float = 1.0  # v0: always mutate weights.
+WEIGHT_MUTATION_RATE: float = 1.0  # v1: always mutate weights.
 
 # Probability per weight of being perturbed by gaussian noise.
 WEIGHT_PERTURB_RATE: float = 0.9
@@ -114,11 +114,28 @@ WEIGHT_PERTURB_SIGMA: float = 0.5
 # Hard clamp on absolute weight magnitude, post-mutation.
 WEIGHT_MAX: float = 5.0
 
-# Per-birth probability of structural mutations. v0 keeps these at 0 by
-# default; flip them on when we graduate to v1.
-ADD_NODE_RATE: float = 0.0
-ADD_CONNECTION_RATE: float = 0.0
-TOGGLE_CONNECTION_RATE: float = 0.0
+# Per-birth probability of structural mutations. v1 turns these on.
+ADD_NODE_RATE: float = 0.03
+ADD_CONNECTION_RATE: float = 0.05
+TOGGLE_CONNECTION_RATE: float = 0.01
+
+
+# --- Selection (microbial tournament) ---------------------------------------
+
+# How often (in ticks) the world runs a tournament sweep. A sweep visits
+# every organism and looks for a nearby rival.
+TOURNAMENT_EVERY: int = 50
+
+# Radius (in cells) within which two organisms may be paired as rivals.
+TOURNAMENT_RADIUS: float = 32.0
+
+# Per-tournament-pair probability that the loser dies and the winner
+# clones (with mutation) nearby. Acts as soft selection pressure even
+# when the world is full.
+TOURNAMENT_KILL_RATE: float = 0.8
+
+# Energy awarded to the winning cloner. The clone starts with this much.
+TOURNAMENT_CLONE_ENERGY: float = 30.0
 
 
 # --- Visualisation ---------------------------------------------------------
