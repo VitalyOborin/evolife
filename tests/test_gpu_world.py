@@ -68,3 +68,43 @@ def test_gpu_world_smell_boundary_wraps_at_corner() -> None:
     w.headings[idx] = math.pi
     # Single step should not raise.
     w.step()
+
+
+def test_gpu_metrics_smoke_writes_sqlite(tmp_path) -> None:
+    """GpuMetrics writes the same schema as Metrics, populated from
+    GPU tensors, with no crash for a 200-tick run."""
+    import sqlite3
+
+    from evolife.gpu_metrics import GpuMetrics
+
+    dev = _device_or_skip()
+    w = GpuWorld(seed=1, width=64, height=64, device=dev)
+    db_path = str(tmp_path / "gpu_metrics_smoke.sqlite")
+    m = GpuMetrics(path=db_path)
+    try:
+        for _ in range(200):
+            w.step()
+            m.record_gpu_world(w)
+            m.record_gpu_organisms(w)
+        m.flush_gpu_events(w)
+    finally:
+        m.close()
+    # Verify schema.
+    c = sqlite3.connect(db_path)
+    tables = {
+        r[0]
+        for r in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    for required in (
+        "world_snapshots",
+        "organism_snapshots",
+        "events",
+    ):
+        assert required in tables
+    n_world = c.execute(
+        "SELECT COUNT(*) FROM world_snapshots"
+    ).fetchone()[0]
+    assert n_world > 0
+

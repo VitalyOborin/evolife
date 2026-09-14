@@ -1,12 +1,14 @@
-"""Run EvoLife with Pygame visualisation."""
+"""Run EvoLife with Pygame visualisation.
+
+Supports both CPU (default) and GPU (`--device cuda`) world. On GPU
+the renderer is `evolife.gpu_visualization.GpuVisualizer`, which draws
+from GPU tensors and uses lineage-based colouring (no species
+inspector — GpuWorld has no SpeciesManager).
+"""
 
 from __future__ import annotations
 
 import argparse
-
-from evolife.metrics import Metrics
-from evolife.visualization import Visualizer
-from evolife.world import World
 
 
 def main() -> None:
@@ -14,11 +16,38 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ticks", type=int, default=10_000,
                         help="Cap on ticks; 0 means run until window is closed.")
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="cpu = World + Visualizer (full species colouring). "
+        "cuda = GpuWorld + GpuVisualizer (lineage colouring, no inspector).",
+    )
     args = parser.parse_args()
 
-    world = World(seed=args.seed)
-    viz = Visualizer(world)
-    metrics = Metrics()
+    if args.device == "cuda":
+        import torch
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "--device cuda requested but torch.cuda.is_available() "
+                "is False"
+            )
+        from evolife.gpu_metrics import GpuMetrics
+        from evolife.gpu_visualization import GpuVisualizer
+        from evolife.gpu_world import GpuWorld
+
+        world = GpuWorld(seed=args.seed, device=torch.device("cuda"))
+        viz = GpuVisualizer(world)
+        metrics = GpuMetrics()
+    else:
+        from evolife.metrics import Metrics
+        from evolife.visualization import Visualizer
+        from evolife.world import World
+
+        world = World(seed=args.seed)
+        viz = Visualizer(world)
+        metrics = Metrics()
 
     try:
         cap = args.ticks if args.ticks > 0 else None
@@ -26,10 +55,15 @@ def main() -> None:
             if cap is not None and world.tick >= cap:
                 break
             world.step()
-            metrics.record_world(world)
-            metrics.record_organisms(world, world.organisms)
-            metrics.record_species(world)
-            metrics.record_behavior(world, world.organisms)
+            if args.device == "cuda":
+                metrics.record_gpu_world(world)
+                metrics.record_gpu_organisms(world)
+                metrics.record_gpu_species(world)
+            else:
+                metrics.record_world(world)
+                metrics.record_organisms(world, world.organisms)
+                metrics.record_species(world)
+                metrics.record_behavior(world, world.organisms)
             viz.render()
     finally:
         metrics.close()
