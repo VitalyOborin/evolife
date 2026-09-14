@@ -87,7 +87,7 @@ N_MOTORS: int = 2
 
 # Founders start with no hidden neurons. Complexity (hidden nodes,
 # recurrence) can appear later via structural mutation.
-N_HIDDEN: int = 0
+N_HIDDEN: int = 1
 
 # Std of initial connection weights. Strong enough that smell can
 # override the weak locomotion prior and flip rest ↔ move.
@@ -97,8 +97,8 @@ INITIAL_WEIGHT_SIGMA: float = 0.20
 # gait: turn bias stays 0 so founders do not spin.
 INITIAL_LOCOMOTION_BIAS_SIGMA: float = 0.10
 
-MAX_LINEAR_SPEED: float = 2.0
-MAX_TURN_RATE: float = 0.3
+MAX_LINEAR_SPEED: float = 3.0
+MAX_TURN_RATE: float = 0.5
 # Drives at or below this are rest. 0 means "non-positive = sit";
 # a tiny value (≈0.01) can be used later if numerical jitter crawls.
 MOVE_DEADZONE: float = 0.0

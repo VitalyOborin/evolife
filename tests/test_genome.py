@@ -20,8 +20,10 @@ def test_make_default_genome_shape():
     hidden_ids = {n.id for n in g.nodes.values() if n.type is NodeType.HIDDEN}
     assert len(sensor_ids) == 3
     assert len(motor_ids) == 2
-    assert len(hidden_ids) == 0
-    assert len(g.connections) == 6
+    # Phase 1.5: founder carries 1 hidden node (feedforward, no recurrence).
+    assert len(hidden_ids) == 1
+    # 3 sensor->hidden + 2 hidden->motor = 5 connections.
+    assert len(g.connections) == 5
     assert sensor_ids.isdisjoint(motor_ids)
 
 

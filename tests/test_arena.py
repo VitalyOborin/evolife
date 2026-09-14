@@ -78,9 +78,9 @@ def test_arena_sample_genomes_by_generation() -> None:
     # Gen 0 might not survive; gens >=1 should typically exist after
     # 500 ticks in the small world.
     assert isinstance(by_gen, dict)
-    # All returned genomes must have a brain shape (5 nodes / 6 conns
-    # for the v2.2 founder).
+    # All returned genomes must have a brain shape (Phase 1.5 founder:
+    # 3 sensor + 1 hidden + 2 motor = 6 nodes, 5 connections).
     for g, genome in by_gen.items():
         n, c = brain_shape(genome)
-        assert n == 5
-        assert c >= 1
+        assert n == 6
+        assert c >= 5

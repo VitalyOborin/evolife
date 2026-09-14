@@ -37,14 +37,31 @@ def test_zero_locomotion_bias_rests_without_smell():
 
 
 def _set_sensor_to_locomotion_weights(g, weight: float) -> None:
+    """Phase 1.5 founder has N_HIDDEN=1. To make a smell probe reliably
+    drive the locomotion motor, set BOTH sides of the path:
+      sensor->hidden = +1.0   (so full smell saturates the hidden to +1)
+      hidden->motor[1] = weight  (the locomotion contribution)
+
+    Hidden bias defaults to 0 so a zero sensor input keeps the hidden
+    at 0, and the hidden->motor edge contributes nothing. With this
+    wiring, full=ones vs zero=zero produces clean step-function control.
+    """
     loc_id = g.motors()[1].id
-    sensor_ids = {n.id for n in g.sensors()}
+    hidden_ids = {
+        n.id for n in g.nodes.values() if n.type.value == "hidden"
+    }
     for c in g.connections.values():
-        if c.in_node in sensor_ids and c.out_node == loc_id:
+        if c.out_node in hidden_ids:
+            c.weight = 1.0
+        elif c.in_node in hidden_ids and c.out_node == loc_id:
             c.weight = weight
 
 
 def test_smell_can_stop_a_weak_roamer():
+    # Feedforward founder + persistent state: hidden is updated from the
+    # *previous* tick's sensor input. So one tick of full smell saturates
+    # the hidden node; the NEXT tick the hidden->motor edge actually
+    # delivers its weight. Two ticks are needed to see the effect.
     g = Brain.make_default_genome(rng=np.random.default_rng(0))
     g.motors()[0].bias = 0.0
     g.motors()[1].bias = 0.08
@@ -52,9 +69,16 @@ def test_smell_can_stop_a_weak_roamer():
     brain = Brain(g)
     none = np.zeros(N_SENSORS, dtype=np.float32)
     full = np.ones(N_SENSORS, dtype=np.float32)
+    # Baseline roamer: zero smell -> locomotion > 0.
     assert locomotion_speed(float(brain.forward(none)[1])) > 0.0
     brain.reset_state()
-    assert locomotion_speed(float(brain.forward(full)[1])) == 0.0
+    # Apply full smell: hidden saturates to ~1 on tick 1, takes effect
+    # on tick 2.
+    brain.forward(full)
+    out = brain.forward(full)
+    # motor[1] = 0.08 + (-0.20) * tanh(3) ~= 0.08 - 0.20 = -0.12,
+    # after tanh still negative -> locomotion_speed == 0.
+    assert locomotion_speed(float(out[1])) == 0.0
 
 
 def test_smell_can_start_a_weak_sitter():
@@ -65,9 +89,15 @@ def test_smell_can_start_a_weak_sitter():
     brain = Brain(g)
     none = np.zeros(N_SENSORS, dtype=np.float32)
     full = np.ones(N_SENSORS, dtype=np.float32)
+    # Baseline sitter: zero smell -> motor[1] = -0.07, after tanh
+    # negative -> locomotion_speed == 0.
     assert locomotion_speed(float(brain.forward(none)[1])) == 0.0
     brain.reset_state()
-    assert locomotion_speed(float(brain.forward(full)[1])) > 0.0
+    # Full smell tick 1 primes hidden; tick 2 hidden->motor[1] = +0.20
+    # -> motor[1] = -0.07 + 0.20 ~= 0.13, after tanh positive.
+    brain.forward(full)
+    out = brain.forward(full)
+    assert locomotion_speed(float(out[1])) > 0.0
 
 
 def test_brain_rejects_wrong_sensor_shape():
