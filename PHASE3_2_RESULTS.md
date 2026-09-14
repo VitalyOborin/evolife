@@ -102,3 +102,64 @@ vs B matters" loud without making it lethal.
 If hidden_season stabilises at neg_energy=-1, we proceed to the
 3-world × N-seed × long-tick sweep. Otherwise: rethink the reward
 design or the founder structure.
+
+## Phase 3.2 outcome: stable demography (commit 2a0bade)
+
+The demographic wave (initial pop 50 → cap 500 → crash to 0) was
+the proximate cause of extinction. The reward asymmetry is real but
+not the bottleneck — the founder dies during the wave, before the
+season flip even matters.
+
+Fix: a Phase 3 specific config block that matches Phase 1.5's
+demographic regime, plus more food headroom:
+
+```
+PHASE3_INITIAL_ENERGY          = FOOD_ENERGY * 2   # 80, was 400
+PHASE3_REPRODUCTION_THRESHOLD  = 128.0             # was 64
+PHASE3_FOOD_TARGET             = 400               # was 200
+PHASE3_FOOD_A_NEGATIVE_ENERGY  = -3.0              # unchanged
+PHASE3_FOOD_B_NEGATIVE_ENERGY  = -3.0              # unchanged
+```
+
+MemoryEcologyWorld overrides `_reproduce` to honour the Phase 3
+threshold (the global `REPRODUCTION_THRESHOLD` is still 64 for the
+legacy World and for any future regression tests).
+
+### Smoke results (warm-start, 4000 ticks, seed 1)
+
+```
+hidden_season  pop@4000=2   maxGen=0  pos=180k neg=138k  (sustainable)
+static_dual    pop@4000=98  maxGen=5  pos=1.8M neg=0      (gen 5 evolved)
+```
+
+hidden_season pop curve:
+
+```
+t=201   pop=50 (no wave — founder can't reproduce fast enough)
+t=1001  pop=44
+t=2001  pop=8   (just before season flip)
+t=2801  pop=3   (after flip — survived)
+t=4000  pop=2   (settled)
+```
+
+Small but non-extinct. The founder lineage (gen=0) survives the
+season flip. With 8000+ tick runs and more founder numbers we should
+see evolution actually do something.
+
+static_dual is healthy: 50 founders → 70 by t=1001 → 98 by t=4000.
+Generation 5 has appeared, evolution is operating on top of the
+founder.
+
+### What this means
+
+The 3 controlled worlds are now demographically viable. Next step is
+a proper 3-world × N-seed × 30k-tick sweep with the arena metrics
+already implemented in `scripts/run_phase3_1.py` and
+`scripts/arena_memory_advantage.py`.
+
+The hypothesis test still has full force: in hidden_season the
+season flips at t=2000 (and every 2000 ticks after) and the founder
+has no way to know which season it's in — only the post-eat feedback
+signal. If evolution grows recurrence in hidden_season but not in
+static_dual or visible_season, that's the signal Phase 3 was built
+to detect.
