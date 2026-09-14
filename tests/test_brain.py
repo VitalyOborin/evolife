@@ -20,13 +20,19 @@ def test_default_brain_forward_shape():
     assert np.all(out <= 1.0)
 
 
-def test_proto_brain_rests_with_no_smell():
-    """Unstimulated proto-brain: turn≈0, locomotion≈0 (rest)."""
+def test_proto_brain_turn_is_quiet_without_smell():
+    """Turn bias is 0, so no smell → no spinning."""
     rng = np.random.default_rng(0)
     g = Brain.make_default_genome(rng=rng)
     brain = Brain(g)
     out = brain.forward(np.zeros(N_SENSORS, dtype=np.float32))
     assert abs(float(out[0])) < 0.05
+
+
+def test_zero_locomotion_bias_rests_without_smell():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    g.motors()[1].bias = 0.0
+    out = Brain(g).forward(np.zeros(N_SENSORS, dtype=np.float32))
     assert abs(float(out[1])) < 0.05
 
 

@@ -80,24 +80,28 @@ N_SENSORS: int = 3
 
 # Motor outputs (both tanh, zero-centered):
 # Index 0: turn_drive      in [-1, 1] -> MAX_TURN_RATE (signed).
-# Index 1: locomotion_drive in [-1, 1]; values <= MOVE_DEADZONE map to
-#          speed 0 (rest). Rest is as natural as motion; the brain does
-#          not encode separate start/stop/continue actions.
+# Index 1: locomotion_drive in [-1, 1]; drive <= 0 is rest, drive > 0
+#          is forward speed. Basal activity comes from NodeGene.bias,
+#          not from a forced sigmoid(0)=0.5 or a locked-zero rest.
 N_MOTORS: int = 2
 
 # Founders start with no hidden neurons. Complexity (hidden nodes,
 # recurrence) can appear later via structural mutation.
 N_HIDDEN: int = 0
 
-# Std of initial connection weights. Small enough that a zero-smell
-# input leaves motors near their unbiased activations (turn≈0, locomotion≈0).
+# Std of initial connection weights. Small enough that sensory
+# modulation starts weak; basal locomotion comes from motor bias.
 INITIAL_WEIGHT_SIGMA: float = 0.05
+
+# Founder locomotion bias ~ N(0, this). Turn bias stays 0 so founders
+# do not spin. Half the population tends to rest, half to roam.
+INITIAL_LOCOMOTION_BIAS_SIGMA: float = 0.35
 
 MAX_LINEAR_SPEED: float = 2.0
 MAX_TURN_RATE: float = 0.3
-# Locomotion drives at or below this are rest. Above it, speed scales
-# linearly so drive=1 still reaches MAX_LINEAR_SPEED.
-MOVE_DEADZONE: float = 0.1
+# Drives at or below this are rest. 0 means "non-positive = sit";
+# a tiny value (≈0.01) can be used later if numerical jitter crawls.
+MOVE_DEADZONE: float = 0.0
 EAT_RADIUS: float = 4.0
 COLLISION_RADIUS: float = 3.0
 
@@ -142,19 +146,20 @@ WEIGHT_REPLACE_SIGMA: float = 1.0
 # Hard clamp on absolute weight magnitude, post-mutation.
 WEIGHT_MAX: float = 5.0
 
-# Per-birth probability of structural mutations. Phase 1 levels:
-# now that a stable food-seeking population is reproducing
-# consistently (Phase 0 baseline), increase the rate at which new
-# topology can appear. With ~1500 reproductions per seed in 10k
-# ticks at Phase 0, these rates give roughly:
-#   add_node:        ~120 per seed -> frequent hidden node origin
-#   add_connection:  ~180 per seed -> wiring rewiring
-#   toggle:          ~30  per seed -> pruning
-# A hidden-hidden cycle (need 1 add_node + 2 add_connections) is
-# expected in ~1-2 seeds out of 5 across 50k ticks.
-ADD_NODE_RATE: float = 0.08
-ADD_CONNECTION_RATE: float = 0.12
-TOGGLE_CONNECTION_RATE: float = 0.02
+# Bias mutation (NodeGene.bias). This is how basal locomotion can
+# evolve: without it a zero-smell net is stuck at tanh(0)=0 forever.
+BIAS_MUTATION_RATE: float = 0.2
+BIAS_PERTURB_SIGMA: float = 0.05
+BIAS_REPLACE_RATE: float = 0.01
+BIAS_REPLACE_SIGMA: float = 0.5
+BIAS_MAX: float = 2.0
+
+# Per-birth probability of structural mutations. Kept rare until a
+# food-seeking population is stable again under the new locomotion
+# semantics — first prove weights and biases of the proto-brain.
+ADD_NODE_RATE: float = 0.002
+ADD_CONNECTION_RATE: float = 0.005
+TOGGLE_CONNECTION_RATE: float = 0.002
 
 
 # --- Selection (natural) ---------------------------------------------------
@@ -207,10 +212,10 @@ class V0Summary:
 def locomotion_speed(drive: float) -> float:
     """Map a tanh locomotion drive in [-1, 1] to forward speed.
 
-    Drives at or below MOVE_DEADZONE (including all reverse drives) are
-    rest. There is no backward motion: waiting is the cheap alternative
-    to roaming, not reversing.
+    Non-positive drive (and anything at or below MOVE_DEADZONE) is rest.
+    Positive drive is speed proportional to the drive. No backward motion:
+    waiting is the cheap alternative to roaming, not reversing.
     """
     if drive <= MOVE_DEADZONE:
         return 0.0
-    return (drive - MOVE_DEADZONE) / (1.0 - MOVE_DEADZONE) * MAX_LINEAR_SPEED
+    return drive * MAX_LINEAR_SPEED

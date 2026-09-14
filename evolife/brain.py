@@ -18,7 +18,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .config import INITIAL_WEIGHT_SIGMA, N_HIDDEN, N_MOTORS, N_SENSORS
+from .config import (
+    BIAS_MAX,
+    INITIAL_LOCOMOTION_BIAS_SIGMA,
+    INITIAL_WEIGHT_SIGMA,
+    N_HIDDEN,
+    N_MOTORS,
+    N_SENSORS,
+)
 from .genome import (
     Activation,
     ConnectionGene,
@@ -141,9 +148,10 @@ class Brain:
         """Construct a proto-brain: sensors wired straight to motors.
 
         Default v2.2 topology is 3 smell sensors, 0 hidden, 2 motors,
-        6 connections. Weights are tiny (N(0, INITIAL_WEIGHT_SIGMA))
-        and motor biases are 0, so with no smell both drives sit near
-        0: the organism rests rather than wandering.
+        6 connections. Weights are tiny. Turn bias is 0; locomotion
+        bias is sampled N(0, INITIAL_LOCOMOTION_BIAS_SIGMA) so the
+        founding population mixes sitters and roamers. Sensory input
+        then modulates that basal drive.
 
         Hidden neurons and recurrent edges are not gifted; they can
         appear later via structural mutation.
@@ -170,15 +178,26 @@ class Brain:
             )
             hidden_ids.append(nid)
         motor_ids: list[int] = []
-        # Both motors are TANH (zero-centered). Biases stay 0 so an
-        # unstimulated proto-brain rests: turn≈0, locomotion≈0.
-        for _ in range(n_motors):
+        # Both motors are TANH. Turn bias stays 0 so founders do not
+        # spin; locomotion bias is sampled so basal activity is a
+        # heritable gene, not a forced walk or a locked rest.
+        for i in range(n_motors):
             nid = len(g.nodes)
+            if i == 0:
+                bias = 0.0
+            else:
+                bias = float(
+                    np.clip(
+                        rng.normal(0.0, INITIAL_LOCOMOTION_BIAS_SIGMA),
+                        -BIAS_MAX,
+                        BIAS_MAX,
+                    )
+                )
             g.nodes[nid] = NodeGene(
                 id=nid,
                 type=NodeType.MOTOR,
                 activation=Activation.TANH,
-                bias=0.0,
+                bias=bias,
             )
             motor_ids.append(nid)
 

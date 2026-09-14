@@ -5,6 +5,7 @@ from evolife.innovation import InnovationDatabase
 from evolife.mutation import (
     mutate_add_connection,
     mutate_add_node,
+    mutate_biases,
     mutate_toggle_connection,
     mutate_weights,
 )
@@ -27,6 +28,29 @@ def test_mutate_weights_changes_some_weights_with_rate_one():
     )
     assert mutated is not g
     assert mutated.connections[1000].weight != 1.0
+
+
+def test_mutate_biases_is_pure_with_rate_zero():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    mutated = mutate_biases(g, np.random.default_rng(0), rate=0.0)
+    assert mutated is g
+
+
+def test_mutate_biases_changes_locomotion_bias():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    loc = g.motors()[1]
+    loc.bias = 0.25
+    mutated = mutate_biases(g, np.random.default_rng(1), rate=1.0, replace_rate=0.0)
+    assert mutated is not g
+    assert mutated.motors()[1].bias != 0.25
+
+
+def test_mutate_biases_does_not_touch_sensors():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    for s in g.sensors():
+        s.bias = 0.77
+    mutated = mutate_biases(g, np.random.default_rng(2), rate=1.0)
+    assert all(s.bias == 0.77 for s in mutated.sensors())
 
 
 def test_add_connection_appends_when_pair_is_new():

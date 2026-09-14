@@ -55,6 +55,7 @@ from .innovation import InnovationDatabase
 from .mutation import (
     mutate_add_connection,
     mutate_add_node,
+    mutate_biases,
     mutate_toggle_connection,
     mutate_weights,
 )
@@ -206,9 +207,9 @@ class World:
         motors = org.brain.forward(sensors)
 
         # Motors: [turn_drive, locomotion_drive], both in [-1, 1].
-        # Rest (locomotion <= deadzone) is a first-class action: no
-        # translation cost. Turning in place is allowed and still costs
-        # energy, so an organism can scan smell gradients before moving.
+        # Rest (locomotion <= 0) is a first-class action: no translation
+        # cost. Turning in place is allowed and still costs energy.
+        # Basal locomotion is a heritable motor bias, not a forced gait.
         turn = float(motors[0]) * MAX_TURN_RATE
         move = locomotion_speed(float(motors[1]))
 
@@ -415,6 +416,7 @@ class World:
 
     def _mutate(self, genome: Genome) -> Genome:
         g = mutate_weights(genome, self.rng)
+        g = mutate_biases(g, self.rng)
         g = mutate_add_connection(g, self.rng, self.innovations)
         g = mutate_add_node(g, self.rng, self.innovations)
         g = mutate_toggle_connection(g, self.rng)

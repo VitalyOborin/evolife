@@ -1,3 +1,5 @@
+import numpy as np
+
 from evolife.brain import Brain
 from evolife.genome import Activation, Genome, NodeGene, NodeType
 
@@ -34,6 +36,15 @@ def test_node_types_match_activation():
     # Both motors are TANH (zero-centered turn and locomotion).
     assert motors[0].activation is Activation.TANH
     assert motors[1].activation is Activation.TANH
+    assert motors[0].bias == 0.0
+
+
+def test_founder_locomotion_bias_is_diverse():
+    rng = np.random.default_rng(1)
+    biases = [
+        Brain.make_default_genome(rng=rng).motors()[1].bias for _ in range(40)
+    ]
+    assert min(biases) < 0.0 < max(biases)
 
 
 def test_active_connections_only_enabled():

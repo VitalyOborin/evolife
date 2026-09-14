@@ -24,6 +24,11 @@ import numpy as np
 from .config import (
     ADD_CONNECTION_RATE,
     ADD_NODE_RATE,
+    BIAS_MAX,
+    BIAS_MUTATION_RATE,
+    BIAS_PERTURB_SIGMA,
+    BIAS_REPLACE_RATE,
+    BIAS_REPLACE_SIGMA,
     TOGGLE_CONNECTION_RATE,
     WEIGHT_MAX,
     WEIGHT_MUTATION_RATE,
@@ -83,6 +88,45 @@ def mutate_weights(
                     rng.normal(0.0, replace_sigma),
                     -WEIGHT_MAX,
                     WEIGHT_MAX,
+                )
+            )
+    return new
+
+
+# --- biases ----------------------------------------------------------------
+
+
+def mutate_biases(
+    genome: Genome,
+    rng: np.random.Generator,
+    rate: float = BIAS_MUTATION_RATE,
+    sigma: float = BIAS_PERTURB_SIGMA,
+    replace_rate: float = BIAS_REPLACE_RATE,
+    replace_sigma: float = BIAS_REPLACE_SIGMA,
+) -> Genome:
+    """Nudge non-sensor node biases so basal drive can evolve.
+
+    Sensors are overwritten by the world each tick, so their bias is
+    unused. Hidden and motor biases are the organism's endogenous
+    activity: locomotion_bias > 0 explores even with no smell.
+    """
+    if rng.random() >= rate:
+        return genome
+
+    new = copy.deepcopy(genome)
+    for node in new.nodes.values():
+        if node.type is NodeType.SENSOR:
+            continue
+        if rng.random() < replace_rate:
+            node.bias = float(
+                np.clip(rng.normal(0.0, replace_sigma), -BIAS_MAX, BIAS_MAX)
+            )
+        else:
+            node.bias = float(
+                np.clip(
+                    node.bias + rng.normal(0.0, sigma),
+                    -BIAS_MAX,
+                    BIAS_MAX,
                 )
             )
     return new

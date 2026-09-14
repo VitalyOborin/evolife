@@ -12,6 +12,7 @@ from evolife.config import (
     MAX_TURN_RATE,
     MOVE_DEADZONE,
     MOVE_ENERGY_COST,
+    N_SENSORS,
     POPULATION_CAP,
     REPRODUCTION_THRESHOLD,
     TURN_ENERGY_COST,
@@ -184,13 +185,12 @@ def test_food_regrows_toward_target_when_rate_is_one(monkeypatch):
     assert len(w.food) == FOOD_TARGET
 
 
-def test_locomotion_speed_rests_at_and_below_deadzone():
+def test_locomotion_speed_rests_when_non_positive():
     assert locomotion_speed(-1.0) == 0.0
     assert locomotion_speed(0.0) == 0.0
     assert locomotion_speed(MOVE_DEADZONE) == 0.0
     assert locomotion_speed(1.0) == MAX_LINEAR_SPEED
-    mid = MOVE_DEADZONE + 0.5 * (1.0 - MOVE_DEADZONE)
-    assert locomotion_speed(mid) == pytest.approx(0.5 * MAX_LINEAR_SPEED)
+    assert locomotion_speed(0.5) == pytest.approx(0.5 * MAX_LINEAR_SPEED)
 
 
 def test_resting_organism_does_not_translate():
@@ -229,6 +229,25 @@ def test_locomotion_above_deadzone_translates_and_costs_energy():
     dy -= w.height * round(dy / w.height)
     assert float(np.hypot(dx, dy)) == pytest.approx(MAX_LINEAR_SPEED)
     assert org.energy == pytest.approx(energy - MAX_LINEAR_SPEED * MOVE_ENERGY_COST)
+
+
+def test_founders_mix_rest_and_roam_with_no_smell():
+    """Initial genetic diversity: some sit, some move, without food cues."""
+    w = World(seed=42)
+    zeros = np.zeros(N_SENSORS, dtype=np.float32)
+    n_moving = 0
+    for org in w.organisms:
+        assert org.brain is not None
+        drive = float(org.brain.forward(zeros)[1])
+        org.brain.reset_state()
+        if locomotion_speed(drive) > 0.0:
+            n_moving += 1
+    n = len(w.organisms)
+    n_rest = n - n_moving
+    assert n_rest > 0
+    assert n_moving > 0
+    frac = n_moving / n
+    assert 0.20 < frac < 0.80
 
 
 class _FixedBrain:

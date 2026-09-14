@@ -30,6 +30,11 @@ import numpy as np
 import torch
 
 from .config import (
+    BIAS_MAX,
+    BIAS_MUTATION_RATE,
+    BIAS_PERTURB_SIGMA,
+    BIAS_REPLACE_RATE,
+    BIAS_REPLACE_SIGMA,
     CHILD_DISPERSAL_MAX,
     CHILD_DISPERSAL_MIN,
     CHILD_HEADING_NOISE,
@@ -122,6 +127,10 @@ class GpuWorld:
         )
         self.gene_enabled = torch.zeros(
             (N, MAX_CONNS_PER_ORG), dtype=torch.bool, device=D
+        )
+        n_nodes = N_SENSORS + N_HIDDEN + N_MOTORS
+        self.node_bias = torch.zeros(
+            (N, n_nodes), dtype=torch.float32, device=D
         )
         self.parent_id = torch.full(
             (N,), -1, dtype=torch.int64, device=D
@@ -235,6 +244,11 @@ class GpuWorld:
         self.gene_out[slot].zero_()
         self.gene_w[slot].zero_()
         self.gene_enabled[slot] = False
+        self.node_bias[slot].zero_()
+        n_nodes = int(self.node_bias.shape[1])
+        for n in genome.nodes.values():
+            if 0 <= n.id < n_nodes:
+                self.node_bias[slot, n.id] = n.bias
         for i, c in enumerate(
             sorted(genome.connections.values(), key=lambda x: x.innovation)[
                 :MAX_CONNS_PER_ORG
@@ -306,11 +320,10 @@ class GpuWorld:
         motors = self._batched_brain_forward(alive_idx, smells)  # (N, 2)
         turn = motors[:, 0] * MAX_TURN_RATE
         drive = motors[:, 1]
-        scale = MAX_LINEAR_SPEED / (1.0 - MOVE_DEADZONE)
         move = torch.where(
             drive <= MOVE_DEADZONE,
             torch.zeros_like(drive),
-            (drive - MOVE_DEADZONE) * scale,
+            drive * MAX_LINEAR_SPEED,
         )
 
         # Apply motion on GPU.
@@ -392,34 +405,24 @@ class GpuWorld:
         # indices of shape (N*2,) computed as row * n_nodes + col.
         linear_idx = org_idx * n_nodes + gout[active]
         delta.view(-1).scatter_add_(0, linear_idx, contribution)
-        # Apply activation: tanh for hidden and both motors (zero-centered),
-        # linear for sensor (sensors already set).
+        delta = delta + self.node_bias[alive_idx]
+        # Apply activation: tanh(bias + weighted input) for hidden and
+        # both motors. Sensors stay as the world-provided values.
         new_state = state.clone()
-        # Hidden (TANH).
         hidden_slice = slice(N_SENSORS, N_SENSORS + N_HIDDEN)
-        new_state[:, hidden_slice] = torch.tanh(
-            state[:, hidden_slice] + delta[:, hidden_slice]
-        )
-        # Motor 0 (TANH, signed turn) and motor 1 (TANH, locomotion).
+        new_state[:, hidden_slice] = torch.tanh(delta[:, hidden_slice])
         motor0 = N_SENSORS + N_HIDDEN
-        new_state[:, motor0] = torch.tanh(
-            state[:, motor0] + delta[:, motor0]
-        )
+        new_state[:, motor0] = torch.tanh(delta[:, motor0])
         motor1 = motor0 + 1
-        new_state[:, motor1] = torch.tanh(
-            state[:, motor1] + delta[:, motor1]
-        )
+        new_state[:, motor1] = torch.tanh(delta[:, motor1])
         # Sensors: overwrite with the original sensor vector.
         new_state[:, :N_SENSORS] = sensors
 
         # Commit.
         self.brain_state[alive_idx] = new_state
 
-        # Motors.
-        motors = new_state[:, motor0:motor1 + 1]
-        return torch.stack(
-            [torch.tanh(motors[:, 0]), torch.tanh(motors[:, 1])], dim=1
-        )
+        # Motors already activated as tanh(bias + input).
+        return new_state[:, motor0:motor1 + 1]
 
     def _step_eat(self, alive_idx: torch.Tensor) -> int:
         """Pairwise organism<->food distance on GPU; nearest within EAT_RADIUS eats."""
@@ -568,6 +571,30 @@ class GpuWorld:
             )
             self.gene_enabled[free] = torch.tensor(
                 new_en, dtype=torch.bool, device=D
+            )
+            child_bias = self.node_bias[slot].cpu().numpy().copy()
+            if self.rng.random() < BIAS_MUTATION_RATE:
+                n_nodes = child_bias.shape[0]
+                for j in range(N_SENSORS, n_nodes):
+                    if self.rng.random() < BIAS_REPLACE_RATE:
+                        child_bias[j] = float(
+                            np.clip(
+                                self.rng.normal(0.0, BIAS_REPLACE_SIGMA),
+                                -BIAS_MAX,
+                                BIAS_MAX,
+                            )
+                        )
+                    else:
+                        child_bias[j] = float(
+                            np.clip(
+                                child_bias[j]
+                                + self.rng.normal(0.0, BIAS_PERTURB_SIGMA),
+                                -BIAS_MAX,
+                                BIAS_MAX,
+                            )
+                        )
+            self.node_bias[free] = torch.tensor(
+                child_bias, dtype=torch.float32, device=D
             )
             # Position: parent's pos + dispersal offset.
             ph = self.headings[slot].item()
