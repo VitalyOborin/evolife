@@ -10,3 +10,5 @@ dist/
 evolife_metrics.sqlite
 *.sqlite
 *.parquet
+graphify-out/
+
