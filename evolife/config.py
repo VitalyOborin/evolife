@@ -154,12 +154,20 @@ BIAS_REPLACE_RATE: float = 0.01
 BIAS_REPLACE_SIGMA: float = 0.20
 BIAS_MAX: float = 2.0
 
-# Per-birth probability of structural mutations. Kept rare until a
-# food-seeking population is stable again under the new locomotion
-# semantics — first prove weights and biases of the proto-brain.
-ADD_NODE_RATE: float = 0.002
-ADD_CONNECTION_RATE: float = 0.005
-TOGGLE_CONNECTION_RATE: float = 0.002
+# Per-birth probability of structural mutations.
+#
+# Phase 0 baseline (kept rare until food-seeking is stable):
+#   ADD_NODE_RATE = 0.002, ADD_CONNECTION_RATE = 0.005
+# Phase 1: rates bumped 5x to make hidden↔hidden cycles more likely
+# to emerge within a single 50k-tick run. We don't expect runaway
+# complexity at these rates — the founder is pure feed-forward and
+# structural mutations must first build a hidden node, then a
+# second, then connect them. 1 in 50 births adds a node and 1 in 20
+# adds a connection; over 50k ticks with ~10k births that is
+# statistically enough to see the first cycle.
+ADD_NODE_RATE: float = 0.01
+ADD_CONNECTION_RATE: float = 0.02
+TOGGLE_CONNECTION_RATE: float = 0.005
 
 
 # --- Selection (natural) ---------------------------------------------------
