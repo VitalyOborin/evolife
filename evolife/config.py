@@ -24,16 +24,16 @@ FOOD_TARGET: int = 400
 FOOD_REGROWTH_RATE: float = 0.002
 
 # Energy gained from eating one food particle.
-FOOD_ENERGY: float = 40.0
+FOOD_ENERGY: float = 30.0
 
 # Energy passively drained per tick just for being alive.
-IDLE_ENERGY_COST: float = 0.01
+IDLE_ENERGY_COST: float = 0.02
 
 # Energy cost per unit of forward motion per tick.
-MOVE_ENERGY_COST: float = 0.08
+MOVE_ENERGY_COST: float = 0.10
 
 # Energy cost per radian of turning per tick.
-TURN_ENERGY_COST: float = 0.03
+TURN_ENERGY_COST: float = 0.05
 
 
 # --- Organism --------------------------------------------------------------
@@ -43,11 +43,11 @@ TURN_ENERGY_COST: float = 0.03
 POPULATION_CAP: int = 500
 
 # Initial organism count when the world boots.
-INITIAL_POPULATION: int = 200
+INITIAL_POPULATION: int = 100
 
 # Energy a newborn organism starts with. Equal to FOOD_ENERGY so a fresh
 # organism has one meal of buffer against starvation.
-INITIAL_ENERGY: float = FOOD_ENERGY
+INITIAL_ENERGY: float = FOOD_ENERGY*2
 
 # Energy threshold above which an organism reproduces. After one successful
 # meal a proto-organism should already be close to replication.
