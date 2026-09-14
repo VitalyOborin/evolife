@@ -78,10 +78,11 @@ MAX_AGE: int = 50_000
 # already has a real bias, and eat/reproduce are automatic.
 N_SENSORS: int = 3
 
-# Motor outputs:
-# Index 0: turn_rate  in [-1, 1]  -> MAX_TURN_RATE (signed).
-# Index 1: move_speed in [0, 1]   -> MAX_LINEAR_SPEED (non-negative).
-# Eat and reproduce are automatic; the brain only evolves navigation.
+# Motor outputs (both tanh, zero-centered):
+# Index 0: turn_drive      in [-1, 1] -> MAX_TURN_RATE (signed).
+# Index 1: locomotion_drive in [-1, 1]; values <= MOVE_DEADZONE map to
+#          speed 0 (rest). Rest is as natural as motion; the brain does
+#          not encode separate start/stop/continue actions.
 N_MOTORS: int = 2
 
 # Founders start with no hidden neurons. Complexity (hidden nodes,
@@ -89,11 +90,14 @@ N_MOTORS: int = 2
 N_HIDDEN: int = 0
 
 # Std of initial connection weights. Small enough that a zero-smell
-# input leaves motors near their unbiased activations (turn≈0, move≈0.5).
+# input leaves motors near their unbiased activations (turn≈0, locomotion≈0).
 INITIAL_WEIGHT_SIGMA: float = 0.05
 
 MAX_LINEAR_SPEED: float = 2.0
 MAX_TURN_RATE: float = 0.3
+# Locomotion drives at or below this are rest. Above it, speed scales
+# linearly so drive=1 still reaches MAX_LINEAR_SPEED.
+MOVE_DEADZONE: float = 0.1
 EAT_RADIUS: float = 4.0
 COLLISION_RADIUS: float = 3.0
 
@@ -191,3 +195,15 @@ class V0Summary:
     population_cap: int = POPULATION_CAP
     initial_population: int = INITIAL_POPULATION
     world_size: tuple[int, int] = (WORLD_WIDTH, WORLD_HEIGHT)
+
+
+def locomotion_speed(drive: float) -> float:
+    """Map a tanh locomotion drive in [-1, 1] to forward speed.
+
+    Drives at or below MOVE_DEADZONE (including all reverse drives) are
+    rest. There is no backward motion: waiting is the cheap alternative
+    to roaming, not reversing.
+    """
+    if drive <= MOVE_DEADZONE:
+        return 0.0
+    return (drive - MOVE_DEADZONE) / (1.0 - MOVE_DEADZONE) * MAX_LINEAR_SPEED

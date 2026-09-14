@@ -36,7 +36,6 @@ from .config import (
     INITIAL_ENERGY,
     INITIAL_POPULATION,
     MAX_AGE,
-    MAX_LINEAR_SPEED,
     MAX_TURN_RATE,
     MOVE_ENERGY_COST,
     NEURON_METABOLIC_COST,
@@ -47,6 +46,7 @@ from .config import (
     TURN_ENERGY_COST,
     WORLD_HEIGHT,
     WORLD_WIDTH,
+    locomotion_speed,
 )
 from .archive import Archive, MilestoneKind
 from .events import EventLog
@@ -205,9 +205,12 @@ class World:
         assert org.brain is not None
         motors = org.brain.forward(sensors)
 
-        # Motors: [turn_rate (signed), move_speed (>= 0)].
+        # Motors: [turn_drive, locomotion_drive], both in [-1, 1].
+        # Rest (locomotion <= deadzone) is a first-class action: no
+        # translation cost. Turning in place is allowed and still costs
+        # energy, so an organism can scan smell gradients before moving.
         turn = float(motors[0]) * MAX_TURN_RATE
-        move = float(motors[1]) * MAX_LINEAR_SPEED
+        move = locomotion_speed(float(motors[1]))
 
         org.energy -= abs(turn) * TURN_ENERGY_COST
         org.energy -= move * MOVE_ENERGY_COST

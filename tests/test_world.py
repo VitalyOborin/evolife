@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from evolife.config import (
     CHILD_DISPERSAL_MAX,
@@ -7,8 +8,14 @@ from evolife.config import (
     FOOD_TARGET,
     INITIAL_POPULATION,
     MAX_AGE,
+    MAX_LINEAR_SPEED,
+    MAX_TURN_RATE,
+    MOVE_DEADZONE,
+    MOVE_ENERGY_COST,
     POPULATION_CAP,
     REPRODUCTION_THRESHOLD,
+    TURN_ENERGY_COST,
+    locomotion_speed,
 )
 from evolife.world import World
 
@@ -175,3 +182,58 @@ def test_food_regrows_toward_target_when_rate_is_one(monkeypatch):
     w.food.clear()
     w.step()
     assert len(w.food) == FOOD_TARGET
+
+
+def test_locomotion_speed_rests_at_and_below_deadzone():
+    assert locomotion_speed(-1.0) == 0.0
+    assert locomotion_speed(0.0) == 0.0
+    assert locomotion_speed(MOVE_DEADZONE) == 0.0
+    assert locomotion_speed(1.0) == MAX_LINEAR_SPEED
+    mid = MOVE_DEADZONE + 0.5 * (1.0 - MOVE_DEADZONE)
+    assert locomotion_speed(mid) == pytest.approx(0.5 * MAX_LINEAR_SPEED)
+
+
+def test_resting_organism_does_not_translate():
+    w = World(seed=1)
+    org = w.organisms[0]
+    org.brain = _FixedBrain(turn=0.0, locomotion=0.0)
+    x, y, heading, energy = org.x, org.y, org.heading, org.energy
+    w._act(org)
+    assert org.x == x
+    assert org.y == y
+    assert org.heading == heading
+    assert org.energy == energy
+
+
+def test_organism_can_turn_in_place_at_a_cost():
+    w = World(seed=1)
+    org = w.organisms[0]
+    org.brain = _FixedBrain(turn=1.0, locomotion=0.0)
+    x, y, heading, energy = org.x, org.y, org.heading, org.energy
+    w._act(org)
+    assert org.x == x
+    assert org.y == y
+    assert org.heading != heading
+    assert org.energy == pytest.approx(energy - MAX_TURN_RATE * TURN_ENERGY_COST)
+
+
+def test_locomotion_above_deadzone_translates_and_costs_energy():
+    w = World(seed=1)
+    org = w.organisms[0]
+    org.brain = _FixedBrain(turn=0.0, locomotion=1.0)
+    x, y, energy = org.x, org.y, org.energy
+    w._act(org)
+    dx = org.x - x
+    dy = org.y - y
+    dx -= w.width * round(dx / w.width)
+    dy -= w.height * round(dy / w.height)
+    assert float(np.hypot(dx, dy)) == pytest.approx(MAX_LINEAR_SPEED)
+    assert org.energy == pytest.approx(energy - MAX_LINEAR_SPEED * MOVE_ENERGY_COST)
+
+
+class _FixedBrain:
+    def __init__(self, turn: float, locomotion: float) -> None:
+        self._out = np.array([turn, locomotion], dtype=np.float32)
+
+    def forward(self, sensors: np.ndarray) -> np.ndarray:
+        return self._out

@@ -31,10 +31,9 @@ def test_node_types_match_activation():
     sensors = g.sensors()
     motors = g.motors()
     assert all(s.activation is Activation.LINEAR for s in sensors)
-    # Motor 0 is TANH (signed turn rate). Motor 1 is SIGMOID
-    # (non-negative move speed).
+    # Both motors are TANH (zero-centered turn and locomotion).
     assert motors[0].activation is Activation.TANH
-    assert motors[1].activation is Activation.SIGMOID
+    assert motors[1].activation is Activation.TANH
 
 
 def test_active_connections_only_enabled():

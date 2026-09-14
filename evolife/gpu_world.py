@@ -44,6 +44,7 @@ from .config import (
     MAX_AGE,
     MAX_LINEAR_SPEED,
     MAX_TURN_RATE,
+    MOVE_DEADZONE,
     MOVE_ENERGY_COST,
     NEURON_METABOLIC_COST,
     N_HIDDEN,
@@ -304,7 +305,13 @@ class GpuWorld:
         # Batched brain forward over fixed-size gene slots.
         motors = self._batched_brain_forward(alive_idx, smells)  # (N, 2)
         turn = motors[:, 0] * MAX_TURN_RATE
-        move = motors[:, 1] * MAX_LINEAR_SPEED
+        drive = motors[:, 1]
+        scale = MAX_LINEAR_SPEED / (1.0 - MOVE_DEADZONE)
+        move = torch.where(
+            drive <= MOVE_DEADZONE,
+            torch.zeros_like(drive),
+            (drive - MOVE_DEADZONE) * scale,
+        )
 
         # Apply motion on GPU.
         new_heading = (headings + turn) % (2 * np.pi)
@@ -385,7 +392,7 @@ class GpuWorld:
         # indices of shape (N*2,) computed as row * n_nodes + col.
         linear_idx = org_idx * n_nodes + gout[active]
         delta.view(-1).scatter_add_(0, linear_idx, contribution)
-        # Apply activation: tanh for hidden/motor 0, sigmoid for motor 1,
+        # Apply activation: tanh for hidden and both motors (zero-centered),
         # linear for sensor (sensors already set).
         new_state = state.clone()
         # Hidden (TANH).
@@ -393,14 +400,13 @@ class GpuWorld:
         new_state[:, hidden_slice] = torch.tanh(
             state[:, hidden_slice] + delta[:, hidden_slice]
         )
-        # Motor 0 (TANH, signed).
+        # Motor 0 (TANH, signed turn) and motor 1 (TANH, locomotion).
         motor0 = N_SENSORS + N_HIDDEN
         new_state[:, motor0] = torch.tanh(
             state[:, motor0] + delta[:, motor0]
         )
-        # Motor 1 (SIGMOID, non-negative).
         motor1 = motor0 + 1
-        new_state[:, motor1] = torch.sigmoid(
+        new_state[:, motor1] = torch.tanh(
             state[:, motor1] + delta[:, motor1]
         )
         # Sensors: overwrite with the original sensor vector.
@@ -412,7 +418,7 @@ class GpuWorld:
         # Motors.
         motors = new_state[:, motor0:motor1 + 1]
         return torch.stack(
-            [torch.tanh(motors[:, 0]), torch.sigmoid(motors[:, 1])], dim=1
+            [torch.tanh(motors[:, 0]), torch.tanh(motors[:, 1])], dim=1
         )
 
     def _step_eat(self, alive_idx: torch.Tensor) -> int:

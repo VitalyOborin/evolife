@@ -142,8 +142,8 @@ class Brain:
 
         Default v2.2 topology is 3 smell sensors, 0 hidden, 2 motors,
         6 connections. Weights are tiny (N(0, INITIAL_WEIGHT_SIGMA))
-        and motor biases are 0, so with no smell the organism walks
-        approximately straight (turn≈0, move≈sigmoid(0)=0.5).
+        and motor biases are 0, so with no smell both drives sit near
+        0: the organism rests rather than wandering.
 
         Hidden neurons and recurrent edges are not gifted; they can
         appear later via structural mutation.
@@ -170,16 +170,14 @@ class Brain:
             )
             hidden_ids.append(nid)
         motor_ids: list[int] = []
-        # Motor 0 (turn rate) is signed -> TANH. Motor 1 (move speed)
-        # is non-negative -> SIGMOID. Biases stay 0 so an unstimulated
-        # proto-brain goes roughly straight at half speed.
-        for i in range(n_motors):
+        # Both motors are TANH (zero-centered). Biases stay 0 so an
+        # unstimulated proto-brain rests: turn≈0, locomotion≈0.
+        for _ in range(n_motors):
             nid = len(g.nodes)
-            act = Activation.TANH if i == 0 else Activation.SIGMOID
             g.nodes[nid] = NodeGene(
                 id=nid,
                 type=NodeType.MOTOR,
-                activation=act,
+                activation=Activation.TANH,
                 bias=0.0,
             )
             motor_ids.append(nid)
