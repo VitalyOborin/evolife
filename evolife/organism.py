@@ -56,6 +56,14 @@ class Organism:
     intake_feedback: float = 0.0
     intake_feedback_ttl: int = 0  # ticks remaining before it decays to 0
     last_intake_feedback: float = 0.0  # most recent non-zero value (for stats)
+    # Phase 3.1: signed-eat counters for adaptation-latency and
+    # positive-choice-fraction metrics. Set in MemoryEcologyWorld._resolve_eat_phase3.
+    positive_eats: int = 0
+    negative_eats: int = 0
+    # Phase 3.1: per-season eating history. List of (season_id, food_letter)
+    # for the most recent positive_eat. Used to compute adaptation latency
+    # after a season flip.
+    positive_eat_seasons: list[int] = field(default_factory=list)
 
     def note_locomotion(self, speed: float) -> None:
         """Record one tick of rest or movement for behavioral metrics."""

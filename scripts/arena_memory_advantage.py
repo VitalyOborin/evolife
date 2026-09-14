@@ -1,155 +1,207 @@
-"""Memory advantage metric.
+"""Memory advantage: causal ablation via SCC edge removal.
 
-Runs a Phase 3 founder genome twice on the same scenario + seed:
+Per CANON, "memory advantage" must be a *causal* metric: the only
+difference between NORMAL and ABLATED must be the recurrent edges.
+We find recurrent edges via strongly connected components (SCC) of
+the genome's directed graph. Edges within any cycle are removed in
+ABLATED; everything else (weights, biases, structure) is identical.
 
-  NORMAL    : brain state persists across ticks (default behaviour).
-  ABLATED   : brain.reset_state() is called before every tick.
+We run both versions on the same MemoryEcologyWorld through real
+world.step() so seasons, smell recompute, intake feedback, and
+reproduction are all live. The metric is reward-sum over the
+episode; positive-fraction is reported as a secondary signal.
 
-memory_advantage = performance(NORMAL) - performance(ABLATED)
-
-If state doesn't help, the difference is ~0. If state matters for the
-task, NORMAL wins.
-
-We use a minimal Phase 3 scenario: uniform spawn of FoodA and FoodB,
-no extra structure. We track only total_eaten and total_positive_eaten
-(the latter only counts eats that gave positive reward). Positive
-eaten is what natural selection acts on, and it is the cleanest
-proxy for "did the brain do the right thing?".
-
-Phase 3 scenarios are kept intentionally simple so the metric is
-about state, not navigation. The MemoryEcologyWorld is reused as-is.
+Genome can be supplied either:
+  --genome-json   path to JSON of Genome.to_dict()
+  --sample-from  sqlite path (phase 3 archive); uses lineage-median
+                  genome at sample_tick (or nearest lower)
 """
 from __future__ import annotations
 
 import argparse
 import csv
-import math
+import json
 import sys
 
 import numpy as np
 
 from evolife.brain import Brain
-from evolife.phase3 import MemoryEcologyWorld
+from evolife.genome import Genome, NodeType
+from evolife.phase3 import (
+    MemoryEcologyWorld,
+    make_phase3_founder_from_warmstart,
+)
 
 
-def run_episode_phase3(
-    genome,
+def find_recurrent_connection_ids(genome: Genome) -> set[int]:
+    """Return innovation ids of edges that participate in a cycle
+    (Tarjan SCC, simplified for small graphs).
+    """
+    # Build adjacency list of enabled connections.
+    adj: dict[int, list[int]] = {nid: [] for nid in genome.nodes}
+    for c in genome.connections.values():
+        if c.enabled:
+            adj.setdefault(c.in_node, []).append(c.out_node)
+            adj.setdefault(c.out_node, [])
+
+    # Tarjan SCC.
+    index_counter = [0]
+    stack: list[int] = []
+    on_stack: set[int] = set()
+    indices: dict[int, int] = {}
+    lowlinks: dict[int, int] = {}
+    sccs: list[list[int]] = []
+
+    def strongconnect(v: int) -> None:
+        indices[v] = index_counter[0]
+        lowlinks[v] = index_counter[0]
+        index_counter[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in adj.get(v, []):
+            if w not in indices:
+                strongconnect(w)
+                lowlinks[v] = min(lowlinks[v], lowlinks[w])
+            elif w in on_stack:
+                lowlinks[v] = min(lowlinks[v], indices[w])
+        if lowlinks[v] == indices[v]:
+            comp: list[int] = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            sccs.append(comp)
+
+    for v in list(genome.nodes):
+        if v not in indices:
+            strongconnect(v)
+
+    # Edges inside an SCC of size >= 2 are recurrent.
+    recurrent_nodes: set[int] = set()
+    for comp in sccs:
+        if len(comp) >= 2:
+            recurrent_nodes.update(comp)
+    recurrent_edges: set[int] = set()
+    for cid, c in genome.connections.items():
+        if c.enabled and c.in_node in recurrent_nodes and c.out_node in recurrent_nodes:
+            recurrent_edges.add(cid)
+    return recurrent_edges
+
+
+def ablated_genome(genome: Genome, recurrent_edges: set[int]) -> Genome:
+    """Return a copy of genome with recurrent edges disabled (not removed,
+    so the topology is otherwise unchanged).
+    """
+    g = Genome.from_dict(genome.to_dict())
+    for cid in recurrent_edges:
+        if cid in g.connections:
+            g.connections[cid].enabled = False
+    return g
+
+
+def run_episode(
+    genome: Genome,
     *,
     n_ticks: int,
     seed: int,
-    reset_state: bool,
-    world_kwargs: dict | None = None,
+    mode: str = "hidden_season",
+    visible_season_sensor: bool = False,
+    warm_genome: Genome | None = None,
+    ablate: bool = False,
 ) -> dict:
-    """One episode of a frozen genome in a MemoryEcologyWorld.
-
-    If `reset_state` is True, brain.reset_state() is called every tick
-    before forward(). Returns a dict with summary metrics.
+    """One episode. The input `genome` may have any topology
+    (typically 3-sensor Phase 1.5 or 7-sensor Phase 3). We convert it
+    to a Phase 3 founder via the standard warm-start graft so the
+    brain topology matches what world._sensors_for emits.
     """
-    world = MemoryEcologyWorld(seed=seed, **(world_kwargs or {}))
-    brain = Brain(genome)
-    org = world.organisms[0]  # founder slot
-    org.brain = brain
-    org.genome = genome
+    # Build the Phase 3 founder that the input genome would produce.
+    phase3_genome = make_phase3_founder_from_warmstart(
+        rng=np.random.default_rng(seed),
+        warm_genome=genome,
+        visible_season_sensor=visible_season_sensor,
+    )
+    if ablate:
+        recurrent = find_recurrent_connection_ids(phase3_genome)
+        phase3_genome = ablated_genome(phase3_genome, recurrent)
+    world = MemoryEcologyWorld(
+        seed=seed, mode=mode,
+        visible_season_sensor=visible_season_sensor,
+        warm_genome=warm_genome,
+    )
+    founder = world.organisms[0]
+    founder.genome = phase3_genome
+    founder.brain = Brain(phase3_genome)
+    founder.intake_feedback = 0.0
+    founder.intake_feedback_ttl = 0
+    founder.positive_eats = 0
+    founder.negative_eats = 0
+    world.organisms = [founder]
 
-    # Energy bookkeeping for this episode.
-    initial_energy = org.energy
-    final_energy = org.energy
-    food_eaten = 0
-    positive_eaten = 0
-    negative_eaten = 0
-    reward_sum = 0.0
-    distance = 0.0
-    last_pos = (org.x, org.y)
-
+    initial_energy = founder.energy
     for _ in range(n_ticks):
-        if reset_state:
-            brain.reset_state()
-        sensors = world._sensors_for(org)
-        motors = brain.forward(sensors)
-        turn = float(motors[0]) * 1.0  # MAX_TURN_RATE handled by world normally
-        move = float(motors[1])
-        org.heading = (org.heading + turn) % (2 * math.pi)
-        org.x = (org.x + np.cos(org.heading) * move) % world.width
-        org.y = (org.y + np.sin(org.heading) * move) % world.height
-        # Update distance.
-        dx = org.x - last_pos[0]
-        dy = org.y - last_pos[1]
-        dx -= world.width * np.round(dx / world.width)
-        dy -= world.height * np.round(dy / world.height)
-        distance += float(np.hypot(dx, dy))
-        last_pos = (org.x, org.y)
-        # Try to eat.
-        ate = False
-        for lst in (world.food_a, world.food_b):
-            if not lst:
-                continue
-            # nearest
-            fx = np.array([f.x for f in lst])
-            fy = np.array([f.y for f in lst])
-            ddx = fx - org.x
-            ddy = fy - org.y
-            ddx -= world.width * np.round(ddx / world.width)
-            ddy -= world.height * np.round(ddy / world.height)
-            dist = np.hypot(ddx, ddy)
-            idx = int(np.argmin(dist))
-            if dist[idx] <= 4.0:  # EAT_RADIUS default
-                food_eaten += 1
-                if isinstance(lst[idx], type(lst[0])) and lst[idx].__class__.__name__ == "FoodA":
-                    reward = (
-                        25.0 if world.season == 0 else -10.0
-                    )
-                else:
-                    reward = (
-                        25.0 if world.season == 1 else -10.0
-                    )
-                reward_sum += reward
-                if reward > 0:
-                    positive_eaten += 1
-                else:
-                    negative_eaten += 1
-                lst.pop(idx)
-                ate = True
-                break
-        # Drain a little to make the episode finite-cost.
-        org.energy -= 0.02
-
-    final_energy = org.energy
+        world.step()
+    final_energy = founder.energy
     return {
-        "food_eaten": food_eaten,
-        "positive_eaten": positive_eaten,
-        "negative_eaten": negative_eaten,
-        "reward_sum": reward_sum,
-        "distance": distance,
+        "positive_eats": founder.positive_eats,
+        "negative_eats": founder.negative_eats,
+        "reward_sum": (
+            founder.positive_eats * 25 - founder.negative_eats * 3
+        ),
+        "ticks_alive": n_ticks,
         "final_energy": final_energy,
+        "initial_energy": initial_energy,
     }
+
+
+def load_genome(path: str) -> Genome:
+    with open(path) as fh:
+        return Genome.from_dict(json.load(fh))
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--genome-json", required=True,
-                   help="Path to a Genome JSON serialised by Genome.to_dict()")
+    p.add_argument("--genome-json", required=True)
+    p.add_argument("--warm-json", default=None,
+                   help="Warm-start genome (Phase 1.5 navigator) for the world bootstrap")
     p.add_argument("--n-ticks", type=int, default=200)
     p.add_argument("--n-seeds", type=int, default=10)
+    p.add_argument("--mode", type=str, default="hidden_season",
+                   choices=("static_dual", "visible_season", "hidden_season"))
+    p.add_argument("--visible-season-sensor", action="store_true")
     p.add_argument("--out", type=str, default="evolife_memory_advantage.csv")
     args = p.parse_args()
 
-    import json
-    from evolife.genome import Genome
-    with open(args.genome_json) as fh:
-        g = Genome.from_dict(json.load(fh))
+    g = load_genome(args.genome_json)
+    warm = load_genome(args.warm_json) if args.warm_json else None
+
+    recurrent = find_recurrent_connection_ids(g)
+    print(f"genome: nodes={len(g.nodes)} conns={len(g.connections)} "
+          f"recurrent_edges={len(recurrent)}")
+    if recurrent:
+        for cid in sorted(recurrent):
+            c = g.connections[cid]
+            print(f"  recurrent: {c.in_node} -> {c.out_node} (innov={cid}, weight={c.weight:.3f})")
 
     rows = []
     for seed in range(args.n_seeds):
-        norm = run_episode_phase3(g, n_ticks=args.n_ticks, seed=seed, reset_state=False)
-        abl = run_episode_phase3(g, n_ticks=args.n_ticks, seed=seed, reset_state=True)
+        norm = run_episode(g, n_ticks=args.n_ticks, seed=seed,
+                           mode=args.mode,
+                           visible_season_sensor=args.visible_season_sensor,
+                           warm_genome=warm, ablate=False)
+        abl = run_episode(g, n_ticks=args.n_ticks, seed=seed,
+                          mode=args.mode,
+                          visible_season_sensor=args.visible_season_sensor,
+                          warm_genome=warm, ablate=True)
         rows.append({
             "seed": seed,
-            "normal_food": norm["food_eaten"],
-            "ablate_food": abl["food_eaten"],
-            "food_advantage": norm["food_eaten"] - abl["food_eaten"],
-            "normal_positive": norm["positive_eaten"],
-            "ablate_positive": abl["positive_eaten"],
-            "positive_advantage": norm["positive_eaten"] - abl["positive_eaten"],
+            "normal_positive": norm["positive_eats"],
+            "ablate_positive": abl["positive_eats"],
+            "positive_advantage": norm["positive_eats"] - abl["positive_eats"],
+            "normal_negative": norm["negative_eats"],
+            "ablate_negative": abl["negative_eats"],
+            "negative_advantage": norm["negative_eats"] - abl["negative_eats"],
             "normal_reward": norm["reward_sum"],
             "ablate_reward": abl["reward_sum"],
             "reward_advantage": norm["reward_sum"] - abl["reward_sum"],
@@ -161,22 +213,15 @@ def main() -> None:
         w.writerows(rows)
     print(f"wrote {args.out}")
 
-    # Print aggregate.
+    # Aggregate.
     n = len(rows)
-    print(f"Per-seed (n={n}):")
-    print(f"{'seed':>4} {'N_food':>6} {'A_food':>6} {'adv_f':>6} "
-          f"{'N_pos':>5} {'A_pos':>5} {'adv_p':>5}")
-    for r in rows:
-        print(f"{r['seed']:>4} {r['normal_food']:>6} {r['ablate_food']:>6} "
-              f"{r['food_advantage']:>+6} {r['normal_positive']:>5} "
-              f"{r['ablate_positive']:>5} {r['positive_advantage']:>+5}")
-    mean_food_adv = sum(r["food_advantage"] for r in rows) / n
-    mean_pos_adv = sum(r["positive_advantage"] for r in rows) / n
-    mean_reward_adv = sum(r["reward_advantage"] for r in rows) / n
+    mean_pos = sum(r["positive_advantage"] for r in rows) / n
+    mean_neg = sum(r["negative_advantage"] for r in rows) / n
+    mean_reward = sum(r["reward_advantage"] for r in rows) / n
     print()
-    print(f"Mean food_advantage      = {mean_food_adv:+.3f}")
-    print(f"Mean positive_advantage  = {mean_pos_adv:+.3f}")
-    print(f"Mean reward_advantage    = {mean_reward_adv:+.3f}")
+    print(f"Mean positive_advantage = {mean_pos:+.3f}")
+    print(f"Mean negative_advantage = {mean_neg:+.3f}")
+    print(f"Mean reward_advantage   = {mean_reward:+.3f}")
 
 
 if __name__ == "__main__":

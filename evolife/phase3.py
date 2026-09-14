@@ -5,36 +5,47 @@ different actions depending on history. Built as a subclass of
 `World` so the legacy Phase 1.5/2.5 single-resource world remains
 untouched.
 
-Differences vs `World`:
-  - Two food types (FoodA, FoodB) with distinct smells.
-  - A global `season` flips reward sign every SEASON_LENGTH ticks.
-    Organisms cannot sense season directly.
-  - After `eat`, the organism receives an intake_feedback signal
-    (+1 for positive reward, -1 for negative) that lasts
-    INTAKE_FEEDBACK_DURATION ticks. The signal is exposed as a 7th
-    sensor input but NOT as a regular smell sensor - it lives at
-    a structurally distinct index and is meant to drive the
-    hidden node via a dedicated heritable edge.
-  - DualSmellField replaces the single SmellField.
+Three modes (`mode` argument to MemoryEcologyWorld):
+  "static_dual"     - two food types, no season flip. Control arm
+                      for "is recurrence selected just by having two
+                      food types?".
+  "visible_season"  - two food types + season flip + season sensor.
+                      Control arm for "is recurrence selected just by
+                      having a season flip visible to the brain?".
+  "hidden_season"   - two food types + season flip + no season sensor.
+                      Only post-eat feedback reveals the reward sign.
+                      This is the actual hypothesis test.
 
-Founder for this world has 7 sensors (6 smell + 1 feedback),
-1 hidden, 2 motors, and 1 dedicated feedback->hidden edge with
-weight FB_TO_HIDDEN_WEIGHT (initially fixed at 1.0 in v3.0; will
-become a heritable gene in v3.1).
+Phase 3.1 design changes from 3.0:
+  - A/B smell are *distinct* sensor channels (6 smell + 1 feedback =
+    7 sensors). Organism can actually choose A vs B.
+  - Founder is built from a warm-start Phase 1.5 evolved genome
+    (good at navigation); old `sensor -> hidden` edges are split
+    into `A_sensor -> hidden` and `B_sensor -> hidden` with the
+    same weight, so the cold-start brain still navigates.
+  - MemoryEcologyWorld._init_state / _populate_initial override
+    cleanly: empty state then Phase 3 population. No "create legacy
+    world then throw it away".
+  - FB_TO_HIDDEN_WEIGHT starts at 0.2, not 1.0. The channel exists
+    but does not dominate the navigation reflex.
+
+Phase 3.1 deliverables:
+  - scripts/run_phase3.py supports --mode {static_dual, visible_season,
+    hidden_season}.
+  - scripts/arena_memory_advantage.py ablates only recurrent edges
+    (SCC-based), not full brain state. Runs through real world.step().
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .brain import Brain, _activate_vec
+from .brain import Brain
 from .config import (
     BIAS_MAX,
-    CHILD_DISPERSAL_MAX,
-    CHILD_DISPERSAL_MIN,
-    CHILD_HEADING_NOISE,
     CONNECTION_METABOLIC_COST,
     EAT_RADIUS,
     FB_TO_HIDDEN_WEIGHT,
@@ -45,16 +56,13 @@ from .config import (
     FOOD_B_POSITIVE_ENERGY,
     FOOD_REGROWTH_RATE,
     FOOD_TARGET,
-    INITIAL_ENERGY,
+    IDLE_ENERGY_COST,
     INITIAL_LOCOMOTION_BIAS_SIGMA,
     INITIAL_POPULATION,
     INITIAL_WEIGHT_SIGMA,
     INTAKE_FEEDBACK_DURATION,
-    IDLE_ENERGY_COST,
     MAX_AGE,
-    MAX_TURN_RATE,
     MOVE_DEADZONE,
-    MOVE_ENERGY_COST,
     NEURON_METABOLIC_COST,
     PHASE3_INITIAL_ENERGY,
     POPULATION_CAP,
@@ -62,68 +70,95 @@ from .config import (
     REPRODUCTION_THRESHOLD,
     SEASON_LENGTH,
     SMELL_HALF_ANGLE,
-    TURN_ENERGY_COST,
 )
 from .events import EventLog
 from .genome import Activation, ConnectionGene, Genome, NodeGene, NodeType
+from .innovation import InnovationDatabase
 from .organism import Organism
 from .sensors import DualSmellField
+from .speciation import SpeciesManager
 from .world import Food, World
 
 
-# Phase 3 sensor layout:
-#   0..2 : smell left/front/right (FoodA in season 0 is +reward, FoodB in
-#          season 1 is +reward; either resource is always available,
-#          reward sign flips with season)
-#   3    : intake_feedback (in {-1, 0, +1})
-# Smell channel is sum of FoodA + FoodB intensities. Phase 3.0 uses
-# the *same* smell probe as Phase 1.5 so that the cold-start founder
-# already knows how to navigate by smell. The 4th channel (feedback)
-# is the only addition.
-N_SMELL_CHANNELS = 3
-FEEDBACK_INDEX = 3
-N_SENSORS_PHASE3 = 4
+# Phase 3.1 sensor layout. Distinct A/B channels + feedback. 7 sensors
+# total in hidden-season mode; 8 in visible-season mode.
+#
+#   0: a_left
+#   1: a_front
+#   2: a_right
+#   3: b_left
+#   4: b_front
+#   5: b_right
+#   6: intake_feedback  (in {-1, 0, +1})
+#   7: season           (in {0, 1})   -- only if PHASE3_VISIBLE_SEASON_SENSOR
+N_SMELL_A = 3  # a_left, a_front, a_right
+N_SMELL_B = 3  # b_left, b_front, b_right
+FEEDBACK_INDEX = 6
+SEASON_INDEX = 7
 
 
 @dataclass
 class FoodA(Food):
     """Food with FoodA smell hue and season-dependent reward."""
-    pass
 
 
 @dataclass
 class FoodB(Food):
     """Food with FoodB smell hue and season-dependent reward."""
-    pass
 
 
-def make_phase3_founder(rng: np.random.Generator) -> Genome:
-    """Build a Phase 3 founder genome.
+def _smell_channel(world: World, org: Organism) -> NDArray[np.float32]:
+    """Read both smell fields and concatenate as 6-vector."""
+    a = world.dual_smell.field_a.sample(
+        org.x, org.y, org.heading, SMELL_HALF_ANGLE
+    )
+    b = world.dual_smell.field_b.sample(
+        org.x, org.y, org.heading, SMELL_HALF_ANGLE
+    )
+    return np.concatenate([a, b]).astype(np.float32)
 
-    Topology (mirrors the legacy Phase 1.5 founder plus one feedback edge):
-      3 smell sensors  -> 1 hidden  (tanh, bias 0)
-      1 feedback sensor -> 1 hidden  (fixed weight FB_TO_HIDDEN_WEIGHT)
-      1 hidden         -> 2 motors  (tanh)
 
-    Total: 6 connections. The first 5 mirror the legacy founder so the
-    cold-start genome already has a working smell-to-motor reflex;
-    only the feedback edge is new.
+def make_phase3_founder_from_warmstart(
+    rng: np.random.Generator,
+    warm_genome: Genome | None = None,
+    visible_season_sensor: bool = False,
+) -> Genome:
+    """Build a Phase 3 founder.
+
+    If `warm_genome` is provided (a Phase 1.5 3-smell-sensor genome),
+    we graft the new sensors by duplicating the smell edges: each
+    old "smell_left -> hidden" edge becomes both "a_left -> hidden"
+    and "b_left -> hidden" with the same weight. The cold-start
+    brain behaves like the warm genome on A+B (both treated as
+    "food"), but evolution can independently tune A vs B.
+
+    If `warm_genome` is None, a fresh random founder is built with
+    all weights drawn from INITIAL_WEIGHT_SIGMA. This is the cold
+    start; it will likely go extinct, which is itself useful
+    evidence that warm-start is needed.
     """
     g = Genome()
+    n_smell_sensors = N_SMELL_A + N_SMELL_B
+    n_extra_sensors = 1 + (1 if visible_season_sensor else 0)
+    n_total_sensors = n_smell_sensors + n_extra_sensors
+
     sensor_ids: list[int] = []
-    for _ in range(N_SENSORS_PHASE3):
+    for _ in range(n_total_sensors):
         nid = len(g.nodes)
         g.nodes[nid] = NodeGene(
             id=nid, type=NodeType.SENSOR, activation=Activation.LINEAR
         )
         sensor_ids.append(nid)
+
     hidden_ids: list[int] = []
-    for _ in range(1):  # N_HIDDEN=1 for Phase 3.0
+    n_hidden = 1
+    for _ in range(n_hidden):
         nid = len(g.nodes)
         g.nodes[nid] = NodeGene(
             id=nid, type=NodeType.HIDDEN, activation=Activation.TANH
         )
         hidden_ids.append(nid)
+
     motor_ids: list[int] = []
     for i in range(2):
         nid = len(g.nodes)
@@ -143,38 +178,121 @@ def make_phase3_founder(rng: np.random.Generator) -> Genome:
         )
         motor_ids.append(nid)
 
-    sigma = INITIAL_WEIGHT_SIGMA
     innov = 0
-    # 3 smell sensors -> hidden
-    for src in sensor_ids[:N_SMELL_CHANNELS]:
+    sigma = INITIAL_WEIGHT_SIGMA
+
+    if warm_genome is not None:
+        # Warm-start: take the 3 smell edges from the warm genome's
+        # hidden node and split each into a_left / b_left etc.
+        warm_hidden_id = None
+        warm_sensor_weights: dict[int, float] = {}
+        for n in warm_genome.nodes.values():
+            if n.type.value == "hidden":
+                warm_hidden_id = n.id
+                break
+        if warm_hidden_id is None:
+            warm_hidden_id = 3  # default fallback for 3-sensor founder
+        # Collect old sensor->hidden weights from warm genome by index.
+        for c in warm_genome.connections.values():
+            if (
+                c.enabled
+                and warm_genome.nodes[c.in_node].type.value == "sensor"
+                and c.out_node == warm_hidden_id
+            ):
+                warm_sensor_weights[c.in_node] = c.weight
+        # The 3-sensor founder has sensor ids 0,1,2 in left/front/right
+        # order. Map them to A_left, A_front, A_right (0..2) and
+        # B_left, B_front, B_right (3..5) with the same weight.
+        sensor_role_to_warm_id = {
+            0: 0,  # a_left   <- warm_left
+            1: 1,  # a_front  <- warm_front
+            2: 2,  # a_right  <- warm_right
+            3: 0,  # b_left   <- warm_left
+            4: 1,  # b_front  <- warm_front
+            5: 2,  # b_right  <- warm_right
+        }
+        for new_sensor_idx in range(n_smell_sensors):
+            warm_id = sensor_role_to_warm_id[new_sensor_idx]
+            w = warm_sensor_weights.get(warm_id, float(rng.normal(0, sigma)))
+            for h in hidden_ids:
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=sensor_ids[new_sensor_idx], out_node=h,
+                    weight=w, enabled=True,
+                )
+                innov += 1
+        # hidden -> motor edges: copy weights from warm genome if
+        # available, else random.
+        warm_motor_weights: dict[int, float] = {}
+        for c in warm_genome.connections.values():
+            if (
+                c.enabled
+                and warm_genome.nodes[c.in_node].type.value == "hidden"
+                and warm_genome.nodes[c.out_node].type.value == "motor"
+            ):
+                warm_motor_weights[c.out_node] = c.weight
+        # motor_ids here is a list of node ids (int), not NodeGene.
+        # Find the warm-genome motor by index to copy weight.
+        warm_motor_ids = sorted(
+            nid for nid, n in warm_genome.nodes.items()
+            if n.type.value == "motor"
+        )
         for h in hidden_ids:
-            g.connections[innov] = ConnectionGene(
-                innovation=innov,
-                in_node=src, out_node=h,
-                weight=float(rng.normal(0, sigma)),
-                enabled=True,
-            )
-            innov += 1
-    # feedback sensor (sensor[3]) -> hidden, fixed weight
-    fb_id = sensor_ids[FEEDBACK_INDEX]
+            for mi, m_id in enumerate(motor_ids):
+                warm_mid = warm_motor_ids[mi] if mi < len(warm_motor_ids) else None
+                w = (
+                    warm_motor_weights.get(warm_mid, float(rng.normal(0, sigma)))
+                    if warm_mid is not None
+                    else float(rng.normal(0, sigma))
+                )
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=h, out_node=m_id, weight=w, enabled=True,
+                )
+                innov += 1
+    else:
+        # Cold start: random weights on all smell->hidden and hidden->motor.
+        for src in sensor_ids[:n_smell_sensors]:
+            for h in hidden_ids:
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=src, out_node=h,
+                    weight=float(rng.normal(0, sigma)),
+                    enabled=True,
+                )
+                innov += 1
+        for h in hidden_ids:
+            for m in motor_ids:
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=h, out_node=m,
+                    weight=float(rng.normal(0, sigma)),
+                    enabled=True,
+                )
+                innov += 1
+
+    # Feedback edge: fixed weight, small.
+    fb_sensor_id = sensor_ids[FEEDBACK_INDEX]
     for h in hidden_ids:
         g.connections[innov] = ConnectionGene(
             innovation=innov,
-            in_node=fb_id, out_node=h,
-            weight=FB_TO_HIDDEN_WEIGHT,
-            enabled=True,
+            in_node=fb_sensor_id, out_node=h,
+            weight=FB_TO_HIDDEN_WEIGHT, enabled=True,
         )
         innov += 1
-    # hidden -> 2 motors
-    for h in hidden_ids:
-        for m in motor_ids:
+
+    # Optional season sensor edge: zero weight, gives evolution a
+    # knob to turn on if useful.
+    if visible_season_sensor:
+        season_sensor_id = sensor_ids[SEASON_INDEX]
+        for h in hidden_ids:
             g.connections[innov] = ConnectionGene(
                 innovation=innov,
-                in_node=h, out_node=m,
-                weight=float(rng.normal(0, sigma)),
-                enabled=True,
+                in_node=season_sensor_id, out_node=h,
+                weight=0.0, enabled=True,
             )
             innov += 1
+
     g.max_innovation = innov
     return g
 
@@ -182,9 +300,10 @@ def make_phase3_founder(rng: np.random.Generator) -> Genome:
 class MemoryEcologyWorld(World):
     """Two-resource + hidden-season + intake_feedback world.
 
-    This subclass leaves the legacy World.__init__ flow intact
-    (single smell field, single food list) for the *constructor*, then
-    immediately swaps in dual-smell / dual-food / season state.
+    Subclasses the legacy World but bypasses World.__init__'s full
+    bootstrap: we call _init_state() to set up the bare world state,
+    then Phase 3-specific population and food spawning, then
+    _populate_initial() (overridden) handles the rest.
     """
 
     def __init__(
@@ -193,35 +312,43 @@ class MemoryEcologyWorld(World):
         width: int = 512,
         height: int = 512,
         events: EventLog | None = None,
+        mode: str = "hidden_season",
+        warm_genome: Genome | None = None,
+        visible_season_sensor: bool = False,
     ) -> None:
-        # Run legacy constructor; we'll immediately overwrite smell and food.
-        super().__init__(seed=seed, width=width, height=height, events=events)
+        if mode not in ("static_dual", "visible_season", "hidden_season"):
+            raise ValueError(f"unknown phase 3 mode: {mode}")
 
-        # Replace single SmellField with DualSmellField.
+        self.mode = mode
+        self.visible_season_sensor = visible_season_sensor
+        self.season_enabled = mode in ("visible_season", "hidden_season")
+        # Initialise empty world state via the base helper.
+        self._init_state(
+            seed=seed, width=width, height=height, events=events,
+        )
+        # Phase 3 specific state.
         self.dual_smell = DualSmellField(width, height)
-        # Keep `self.smell` as a reference to field_a so legacy code paths
-        # that read `self.smell` don't crash (e.g. Arena). It just won't
-        # be the source of truth for MemoryEcologyWorld.
+        # For backwards compat with code that reads self.smell.
         self.smell = self.dual_smell.field_a
-
-        # Rebuild food lists.
         self.food_a: list[FoodA] = []
         self.food_b: list[FoodB] = []
-        # Clear legacy self.food; nothing should read it in this subclass.
-        self.food = []  # type: ignore[assignment]
-
+        # Clear legacy self.food (kept as empty list to satisfy
+        # metrics code that may iterate it).
+        self.food = []
+        # Warm-start genome (used by _spawn_founder_override below).
+        self._warm_genome = warm_genome
         # Season state.
         self.season: int = 0
         self.ticks_in_season: int = 0
+        # Spawn founders + initial food.
+        self._populate_initial()
 
-        # Re-spawn founders with the Phase 3 genome (7 sensors, feedback edge).
-        self.organisms = []
-        self._next_id = 0
+    def _populate_initial(self) -> None:
+        """Phase 3 founder population + dual-resource food spawn."""
         for _ in range(INITIAL_POPULATION):
             self._spawn_founder()
         self.species_manager.sync(self.organisms, self.tick)
 
-        # Initial food split per FOOD_A_FRACTION.
         n_a = int(FOOD_TARGET * FOOD_A_FRACTION)
         n_b = FOOD_TARGET - n_a
         for _ in range(n_a):
@@ -229,13 +356,13 @@ class MemoryEcologyWorld(World):
         for _ in range(n_b):
             self._spawn_food_b()
 
-    # --- spawning ----------------------------------------------------------
-
     def _spawn_founder(self) -> None:
-        """Phase 3 founder with 7 sensors and feedback edge."""
-        import math
-
-        genome = make_phase3_founder(rng=self.rng)
+        """Phase 3 founder with 6 distinct A/B smell sensors."""
+        genome = make_phase3_founder_from_warmstart(
+            rng=self.rng,
+            warm_genome=self._warm_genome,
+            visible_season_sensor=self.visible_season_sensor,
+        )
         for c in genome.connections.values():
             self.innovations.innovation_for(c.in_node, c.out_node)
         genome.max_innovation = max(
@@ -272,16 +399,17 @@ class MemoryEcologyWorld(World):
     # --- main loop ---------------------------------------------------------
 
     def step(self) -> None:
-        """Advance one tick. Override to use dual smell + dual food + season."""
+        """Advance one tick. Phase 3 dual-resource + optional season."""
         self.tick += 1
 
-        # 0. Season flip if needed.
-        if self.ticks_in_season >= SEASON_LENGTH:
+        # 0. Season flip if enabled.
+        if self.season_enabled and self.ticks_in_season >= SEASON_LENGTH:
             self.season = 1 - self.season
             self.ticks_in_season = 0
-        self.ticks_in_season += 1
+        if self.season_enabled:
+            self.ticks_in_season += 1
 
-        # 1. Regrow food per resource (binomial deficit vs target split).
+        # 1. Regrow food per resource.
         a_target = int(FOOD_TARGET * FOOD_A_FRACTION)
         b_target = FOOD_TARGET - a_target
         missing_a = max(0, a_target - len(self.food_a))
@@ -298,7 +426,7 @@ class MemoryEcologyWorld(World):
         # 2. Recompute dual smell field.
         self.dual_smell.recompute_split(self.food_a, self.food_b)
 
-        # 3. Decay intake feedback for living organisms.
+        # 3. Decay intake feedback.
         for org in self.organisms:
             if org.intake_feedback_ttl > 0:
                 org.intake_feedback_ttl -= 1
@@ -311,10 +439,10 @@ class MemoryEcologyWorld(World):
                 continue
             self._act(org)
 
-        # 5. Resolve eat attempts (override for signed rewards).
+        # 5. Resolve eat (signed reward, feedback).
         self._resolve_eat_phase3()
 
-        # 6. Drain + death + reproduction + archive (same as legacy).
+        # 6. Drain + death.
         survivors: list[Organism] = []
         for org in self.organisms:
             if not org.alive:
@@ -350,36 +478,33 @@ class MemoryEcologyWorld(World):
     # --- per-organism action -------------------------------------------------
 
     def _sensors_for(self, org: Organism) -> NDArray[np.float32]:
-        """3-vector smell (FoodA + FoodB summed) + 1-element feedback.
+        """7-vector (or 8 with season sensor).
 
         Order:
-          [smell_left, smell_front, smell_right, intake_feedback]
-
-        Smell is the *total* smell from both resources so the cold-start
-        brain already has a working navigation reflex inherited from
-        Phase 1.5. The brain cannot tell which resource it smells; only
-        the post-eat feedback signal reveals it.
+          [a_left, a_front, a_right,
+           b_left, b_front, b_right,
+           intake_feedback,
+           (optional) season in {0, 1}]
         """
-        smell_a = self.dual_smell.field_a.sample(
-            org.x, org.y, org.heading, SMELL_HALF_ANGLE
-        )
-        smell_b = self.dual_smell.field_b.sample(
-            org.x, org.y, org.heading, SMELL_HALF_ANGLE
-        )
-        smell = np.minimum(smell_a + smell_b, 1.0)  # clip at 1, not 2
+        smell = _smell_channel(self, org)
         fb = float(org.intake_feedback) if org.intake_feedback_ttl > 0 else 0.0
-        arr = np.empty(N_SENSORS_PHASE3, dtype=np.float32)
-        arr[:N_SMELL_CHANNELS] = smell
-        arr[FEEDBACK_INDEX] = fb
+        if self.visible_season_sensor:
+            arr = np.empty(N_SMELL_A + N_SMELL_B + 2, dtype=np.float32)
+            arr[:N_SMELL_A + N_SMELL_B] = smell
+            arr[FEEDBACK_INDEX] = fb
+            arr[SEASON_INDEX] = float(self.season)
+        else:
+            arr = np.empty(N_SMELL_A + N_SMELL_B + 1, dtype=np.float32)
+            arr[:N_SMELL_A + N_SMELL_B] = smell
+            arr[FEEDBACK_INDEX] = fb
         return arr
 
     def _resolve_eat_phase3(self) -> None:
-        """Override _resolve_eat to use season-dependent rewards and to
-        set intake_feedback on the organism."""
+        """Override _resolve_eat to use season-dependent rewards + feedback."""
         for org in self.organisms:
             if not org.alive:
                 continue
-            for food_list in (self.food_a, self.food_b):
+            for food_list, is_a in ((self.food_a, True), (self.food_b, False)):
                 if not food_list:
                     continue
                 fx = np.array([f.x for f in food_list], dtype=np.float32)
@@ -392,8 +517,7 @@ class MemoryEcologyWorld(World):
                 idx = int(np.argmin(dist))
                 if float(dist[idx]) <= EAT_RADIUS:
                     eaten = food_list.pop(idx)
-                    # Season-dependent reward.
-                    if isinstance(eaten, FoodA):
+                    if is_a:
                         reward = (
                             FOOD_A_POSITIVE_ENERGY
                             if self.season == 0
@@ -409,13 +533,16 @@ class MemoryEcologyWorld(World):
                     org.food_eaten += 1
                     if org.time_to_first_food is None:
                         org.time_to_first_food = org.age
-                    # Set intake_feedback signal.
                     if reward > 0:
                         org.intake_feedback = +1.0
                     else:
                         org.intake_feedback = -1.0
                     org.intake_feedback_ttl = INTAKE_FEEDBACK_DURATION
                     org.last_intake_feedback = org.intake_feedback
+                    if reward > 0:
+                        org.positive_eats = getattr(org, "positive_eats", 0) + 1
+                    else:
+                        org.negative_eats = getattr(org, "negative_eats", 0) + 1
                     self.events.record_eat(
                         self.tick, org_id=org.id,
                         x=eaten.x, y=eaten.y,

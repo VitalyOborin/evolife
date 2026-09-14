@@ -81,6 +81,20 @@ class World:
         height: int = WORLD_HEIGHT,
         events: EventLog | None = None,
     ) -> None:
+        self._init_state(seed=seed, width=width, height=height, events=events)
+        self._populate_initial()
+
+    def _init_state(
+        self,
+        *,
+        seed: int | None,
+        width: int,
+        height: int,
+        events: EventLog | None,
+    ) -> None:
+        """Initialise empty world state. Subclasses can extend but should
+        call super()._init_state() first.
+        """
         self.width = width
         self.height = height
         self.rng = np.random.default_rng(seed)
@@ -94,10 +108,11 @@ class World:
         self.smell = SmellField(width, height)
         self._next_id: int = 0
 
+    def _populate_initial(self) -> None:
+        """Spawn founders + initial food. Subclasses can override."""
         for _ in range(INITIAL_POPULATION):
             self._spawn_founder()
         self.species_manager.sync(self.organisms, self.tick)
-
         while len(self.food) < FOOD_TARGET:
             self._spawn_food()
 

@@ -41,7 +41,19 @@ FOOD_ENERGY: float = 40.0
 # node. Held constant at 1.0 in v3.0; planned to become a heritable gene
 # in v3.1. The feedback sensor carries the recent intake signal
 # (intake_feedback, in {-1, 0, +1}).
-FB_TO_HIDDEN_WEIGHT: float = 1.0
+FB_TO_HIDDEN_WEIGHT: float = 0.2
+
+# Phase 3.1 world mode. One of:
+#   "static_dual"      : two food types, no season (control)
+#   "visible_season"   : two food types, season changes, season visible
+#                        via a dedicated sensor (control)
+#   "hidden_season"    : two food types, season changes, no sensor for
+#                        season, only post-eat feedback (the actual test)
+PHASE3_DEFAULT_MODE: str = "hidden_season"
+
+# Whether to expose season as an extra dedicated sensor. Only used by
+# "visible_season" mode. Hidden-season tests must keep this False.
+PHASE3_VISIBLE_SEASON_SENSOR: bool = False
 
 # Phase 3: signed reward magnitudes. Eating FoodA in season 0 gives +25; in
 # season 1 the *same* smell yields -3. Energy delta is what the organism
