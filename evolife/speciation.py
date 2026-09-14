@@ -15,6 +15,8 @@ from .config import (
     COMPAT_C_DISJOINT,
     COMPAT_C_EXCESS,
     COMPAT_C_WEIGHT,
+    ESTABLISHED_MIN_AGE,
+    ESTABLISHED_MIN_PEAK,
     SPECIES_REPRESENTATIVE_EVERY,
     SPECIES_THRESHOLD,
 )
@@ -77,13 +79,14 @@ class Species:
     parent_species_id: int | None = None
     founder_organism_id: int = 0
     extinct: bool = False
+    established: bool = False
 
 
 @dataclass
 class SpeciesEvent:
     tick: int
     species_id: int
-    kind: str  # ORIGIN | EXTINCTION
+    kind: str  # ORIGIN | EXTINCTION | ESTABLISHED
     parent_species_id: int | None = None
     founder_organism_id: int | None = None
     representative_genome_hash: str = ""
@@ -141,6 +144,7 @@ class SpeciesManager:
                 sp.last_seen_tick = tick
                 if n > sp.peak_population:
                     sp.peak_population = n
+                self._maybe_establish(sp, tick)
             elif not sp.extinct:
                 sp.extinct = True
                 self.events.append(
@@ -182,6 +186,26 @@ class SpeciesManager:
 
     def living(self) -> list[Species]:
         return [s for s in self.species.values() if not s.extinct]
+
+    def established_living(self) -> list[Species]:
+        return [s for s in self.living() if s.established]
+
+    def _maybe_establish(self, sp: Species, tick: int) -> None:
+        if sp.established or sp.extinct:
+            return
+        age = tick - sp.born_tick
+        if age > ESTABLISHED_MIN_AGE and sp.peak_population >= ESTABLISHED_MIN_PEAK:
+            sp.established = True
+            self.events.append(
+                SpeciesEvent(
+                    tick=tick,
+                    species_id=sp.id,
+                    kind="ESTABLISHED",
+                    parent_species_id=sp.parent_species_id,
+                    founder_organism_id=sp.founder_organism_id,
+                    representative_genome_hash=sp.representative.fingerprint(),
+                )
+            )
 
     def _originate(
         self,

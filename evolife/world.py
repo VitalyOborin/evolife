@@ -469,6 +469,9 @@ class World:
     def n_species(self) -> int:
         return len(self.species_manager.living())
 
+    def n_established_species(self) -> int:
+        return len(self.species_manager.established_living())
+
     def median_movement_transitions(self) -> float:
         alive = [o.movement_transitions for o in self.organisms if o.alive]
         if not alive:

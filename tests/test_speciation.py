@@ -4,7 +4,13 @@ import numpy as np
 import pytest
 
 from evolife.brain import Brain
-from evolife.config import COMPAT_C_EXCESS, REPRODUCTION_THRESHOLD, SPECIES_THRESHOLD
+from evolife.config import (
+    COMPAT_C_EXCESS,
+    ESTABLISHED_MIN_AGE,
+    ESTABLISHED_MIN_PEAK,
+    REPRODUCTION_THRESHOLD,
+    SPECIES_THRESHOLD,
+)
 from evolife.genome import ConnectionGene
 from evolife.speciation import SpeciesManager, compatibility_distance
 from evolife.world import World
@@ -60,6 +66,8 @@ def test_founders_share_one_species():
     assert w.n_species() == 1
     living = w.species_manager.living()
     assert living[0].member_count == len(w.organisms)
+    assert living[0].established is False
+    assert w.n_established_species() == 0
 
 
 def test_child_stays_in_parent_species_when_close():
@@ -84,3 +92,33 @@ def test_species_goes_extinct_when_last_member_dies():
             break
     assert w.species_manager.species[sid].extinct
     assert any(e.kind == "EXTINCTION" and e.species_id == sid for e in w.species_manager.events)
+
+
+class _Alive:
+    def __init__(self, species_id: int) -> None:
+        self.species_id = species_id
+        self.alive = True
+
+
+def test_species_establishes_only_after_age_and_peak():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    mgr = SpeciesManager()
+    sid = mgr.assign(g, tick=0, organism_id=0)
+    orgs = [_Alive(sid) for _ in range(ESTABLISHED_MIN_PEAK)]
+    mgr.sync(orgs, tick=ESTABLISHED_MIN_AGE)
+    assert mgr.species[sid].established is False
+    mgr.sync(orgs, tick=ESTABLISHED_MIN_AGE + 1)
+    assert mgr.species[sid].established is True
+    assert sum(1 for e in mgr.events if e.kind == "ESTABLISHED") == 1
+    mgr.sync(orgs, tick=ESTABLISHED_MIN_AGE + 50)
+    assert sum(1 for e in mgr.events if e.kind == "ESTABLISHED") == 1
+
+
+def test_species_with_small_peak_does_not_establish():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    mgr = SpeciesManager()
+    sid = mgr.assign(g, tick=0, organism_id=0)
+    orgs = [_Alive(sid) for _ in range(ESTABLISHED_MIN_PEAK - 1)]
+    mgr.sync(orgs, tick=ESTABLISHED_MIN_AGE + 5_000)
+    assert mgr.species[sid].established is False
+    assert all(e.kind != "ESTABLISHED" for e in mgr.events)

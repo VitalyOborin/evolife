@@ -224,6 +224,11 @@ EXPLORE_BIN: int = 16
 # rather than FORWARD for state-dependence.
 TURN_ACTION_THRESHOLD: float = 0.05
 
+# A living species is "established" only after it has persisted long
+# enough and grown a real population. One-off mutants stay "newborn".
+ESTABLISHED_MIN_AGE: int = 1000
+ESTABLISHED_MIN_PEAK: int = 10
+
 
 @dataclass(frozen=True)
 class V0Summary:

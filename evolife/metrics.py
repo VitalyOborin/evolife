@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS species_snapshots (
     last_seen_tick             INTEGER NOT NULL,
     parent_species_id          INTEGER,
     extinct                    INTEGER NOT NULL,
+    established                INTEGER NOT NULL,
     representative_genome_hash TEXT,
     PRIMARY KEY (tick, species_id)
 );
@@ -126,6 +127,7 @@ class Metrics:
         self._conn = sqlite3.connect(path)
         self._conn.executescript(_SCHEMA)
         self._migrate_organism_snapshots()
+        self._migrate_species_snapshots()
         self._species_event_offset = 0
         self._conn.commit()
 
@@ -150,6 +152,17 @@ class Metrics:
                 self._conn.execute(
                     f"ALTER TABLE organism_snapshots ADD COLUMN {name} {spec}"
                 )
+
+    def _migrate_species_snapshots(self) -> None:
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(species_snapshots)")
+        }
+        if "established" not in cols:
+            self._conn.execute(
+                "ALTER TABLE species_snapshots ADD COLUMN established "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -226,6 +239,7 @@ class Metrics:
                     sp.last_seen_tick,
                     sp.parent_species_id,
                     int(sp.extinct),
+                    int(sp.established),
                     sp.representative.fingerprint(),
                 )
             )
@@ -234,9 +248,9 @@ class Metrics:
         self._conn.executemany(
             "INSERT OR REPLACE INTO species_snapshots ("
             "tick, species_id, member_count, peak_population, born_tick, "
-            "last_seen_tick, parent_species_id, extinct, "
+            "last_seen_tick, parent_species_id, extinct, established, "
             "representative_genome_hash"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self._conn.commit()

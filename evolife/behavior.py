@@ -120,6 +120,30 @@ def state_dependence(org: "Organism") -> float:
     return float(h)
 
 
+def mean_descriptors(organisms) -> dict[str, float] | None:
+    """Average behavioral + genome descriptors over living organisms."""
+    living = [o for o in organisms if o.alive]
+    if not living:
+        return None
+    acc: dict[str, float] = {}
+    n_gen = 0
+    nodes = 0.0
+    conns = 0.0
+    for o in living:
+        for k, v in descriptors(o).items():
+            acc[k] = acc.get(k, 0.0) + v
+        if o.genome is not None:
+            n_gen += 1
+            nodes += len(o.genome.nodes)
+            conns += len(o.genome.connections)
+    n = len(living)
+    out = {k: v / n for k, v in acc.items()}
+    out["genome_nodes"] = nodes / n_gen if n_gen else 0.0
+    out["genome_conns"] = conns / n_gen if n_gen else 0.0
+    out["n"] = float(n)
+    return out
+
+
 def _sensor_state(sensors) -> int:
     l = _bin(float(sensors[0]))
     f = _bin(float(sensors[1]))

@@ -77,6 +77,7 @@ def main() -> None:
                 f"rate={rate:.1f}/s  pop={pop:>3}  "
                 f"maxGen={max_gen:>3}  lin={world.n_lineages():>3}  "
                 f"nSp={world.n_species():>3}  "
+                f"est={world.n_established_species():>3}  "
                 f"meanE={world.mean_energy():>6.1f}  "
                 f"births={n_births:>5}  deaths={n_deaths:>5}  "
                 f"eats={n_eats:>5}  reproductions={n_repros:>5}  "

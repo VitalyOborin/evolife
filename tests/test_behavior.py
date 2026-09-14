@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from evolife.behavior import descriptors, note_act, state_dependence, steering_alignment
+from evolife.behavior import (
+    descriptors,
+    mean_descriptors,
+    note_act,
+    state_dependence,
+    steering_alignment,
+)
 from evolife.organism import Organism
 from evolife.world import World
 
@@ -48,6 +54,20 @@ def test_rest_move_transition_updates_descriptors():
     assert d["mean_speed"] > 0.0
     assert -1.0 <= d["steering_alignment"] <= 1.0
     assert d["state_dependence"] >= 0.0
+
+
+def test_mean_descriptors_averages_living_members():
+    a = _org()
+    a.age = 10
+    a.ticks_moving = 8
+    b = Organism(id=1, x=8.0, y=8.0, heading=0.0, energy=10.0)
+    b.age = 10
+    b.ticks_moving = 2
+    b.alive = False
+    means = mean_descriptors([a, b])
+    assert means is not None
+    assert means["n"] == 1.0
+    assert means["moving_fraction"] == 0.8
 
 
 class _FixedBrain:
