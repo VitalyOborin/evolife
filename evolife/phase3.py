@@ -500,7 +500,12 @@ class MemoryEcologyWorld(World):
         return arr
 
     def _resolve_eat_phase3(self) -> None:
-        """Override _resolve_eat to use season-dependent rewards + feedback."""
+        """Override _resolve_eat to use season-dependent rewards + feedback.
+
+        In static_dual mode both food types are always positive: there
+        is no season and no resource to avoid. Only in visible_season
+        and hidden_season does the sign of the reward flip with season.
+        """
         for org in self.organisms:
             if not org.alive:
                 continue
@@ -517,7 +522,14 @@ class MemoryEcologyWorld(World):
                 idx = int(np.argmin(dist))
                 if float(dist[idx]) <= EAT_RADIUS:
                     eaten = food_list.pop(idx)
-                    if is_a:
+                    if not self.season_enabled:
+                        # static_dual: both resources are always +25.
+                        reward = (
+                            FOOD_A_POSITIVE_ENERGY
+                            if is_a
+                            else FOOD_B_POSITIVE_ENERGY
+                        )
+                    elif is_a:
                         reward = (
                             FOOD_A_POSITIVE_ENERGY
                             if self.season == 0
