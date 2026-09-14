@@ -94,6 +94,8 @@ class GpuSmellField:
         )
         cx = np.round(positions[:, 0]).astype(np.int64) % W
         cy = np.round(positions[:, 1]).astype(np.int64) % H
+        cx = np.clip(cx, 0, W - 1)
+        cy = np.clip(cy, 0, H - 1)
         idx = cy * W + cx
         flat = torch.zeros(H * W, dtype=torch.float32, device=self.device)
         ones = torch.ones(len(idx), dtype=torch.float32, device=self.device)
@@ -118,8 +120,12 @@ class GpuSmellField:
         H, W = self.height, self.width
         if alive_mask is not None:
             positions = positions[alive_mask]
-        cx = torch.round(positions[:, 0]).to(torch.int64) % W
-        cy = torch.round(positions[:, 1]).to(torch.int64) % H
+        cx = torch.remainder(
+            torch.round(positions[:, 0]).to(torch.int64), W
+        )
+        cy = torch.remainder(
+            torch.round(positions[:, 1]).to(torch.int64), H
+        )
         idx = cy * W + cx
         flat = torch.zeros(H * W, dtype=torch.float32, device=self.device)
         ones = torch.ones(idx.shape[0], dtype=torch.float32, device=self.device)
@@ -149,14 +155,17 @@ class GpuSmellField:
         # angles: (N, 3) = headings[:, None] + offsets[None, :]
         angles = headings.unsqueeze(1) + offsets.unsqueeze(0)
         # probe_x: (N, 3) = (x + D*cos(angle)) % W
-        probe_x = (
-            xs.unsqueeze(1) + D * torch.cos(angles)
-        ) % self.width
-        probe_y = (
-            ys.unsqueeze(1) + D * torch.sin(angles)
-        ) % self.height
-        ix = probe_x.long()
-        iy = probe_y.long()
+        # NOTE: float `%` can return values exactly equal to W (when the
+        # divisor is W and the dividend lands on a boundary cell). We
+        # wrap with a safe floor-mod so the result is strictly < W.
+        probe_x = torch.remainder(
+            xs.unsqueeze(1) + D * torch.cos(angles), self.width
+        )
+        probe_y = torch.remainder(
+            ys.unsqueeze(1) + D * torch.sin(angles), self.height
+        )
+        ix = probe_x.long().clamp(min=0, max=self.width - 1)
+        iy = probe_y.long().clamp(min=0, max=self.height - 1)
         # Gather values from grid (1, 1, H, W) -> (H, W).
         grid2d = self._grid[0, 0]
         # Linearise indices.

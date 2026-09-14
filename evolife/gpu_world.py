@@ -249,11 +249,19 @@ class GpuWorld:
         for n in genome.nodes.values():
             if 0 <= n.id < n_nodes:
                 self.node_bias[slot, n.id] = n.bias
-        for i, c in enumerate(
-            sorted(genome.connections.values(), key=lambda x: x.innovation)[
-                :MAX_CONNS_PER_ORG
-            ]
-        ):
+        # Sanitize: drop connections whose endpoints are outside the
+        # GPU's fixed node range AND clip to MAX_CONNS_PER_ORG. Without
+        # this, mutation-driven hidden nodes (id >= n_nodes) would push
+        # gin/gout out of bounds during _batched_brain_forward and
+        # trigger a CUDA assert.
+        valid_conns = [
+            c
+            for c in sorted(
+                genome.connections.values(), key=lambda x: x.innovation
+            )
+            if 0 <= c.in_node < n_nodes and 0 <= c.out_node < n_nodes
+        ][:MAX_CONNS_PER_ORG]
+        for i, c in enumerate(valid_conns):
             self.gene_in[slot, i] = c.in_node
             self.gene_out[slot, i] = c.out_node
             self.gene_w[slot, i] = c.weight
@@ -375,14 +383,20 @@ class GpuWorld:
         gout = self.gene_out[alive_idx].reshape(-1)
         gw = self.gene_w[alive_idx].reshape(-1)
         ge = self.gene_enabled[alive_idx].reshape(-1)
+        # Defensive clamp: even though _write_genome_to_slot filters
+        # out-of-range connections, mutations elsewhere or future code
+        # paths could still produce a bad id. Clamping here keeps the
+        # scatter-add within bounds instead of triggering CUDA assert.
+        gin_safe = gin.clamp(min=0, max=n_nodes - 1)
+        gout_safe = gout.clamp(min=0, max=n_nodes - 1)
         active = ge & ((gin != 0) | (gout != 0))
         # Per-organism offsets for row indices.
         offs = (
             torch.arange(N, device=self.device).unsqueeze(1)
             * n_nodes
         ).expand(N, MAX_CONNS_PER_ORG).reshape(-1)
-        src = (offs + gin).long()[active]
-        dst = (offs + gout).long()[active]
+        src = (offs + gin_safe).long()[active]
+        dst = (offs + gout_safe).long()[active]
         vals = gw[active]
         # delta per (org, node).
         delta = torch.zeros(
@@ -393,7 +407,7 @@ class GpuWorld:
         # delta.index_add_(dim=1, index=gout[active], src=vals * state[...])
         # state at src position, for the same org.
         # We need state[org, gin] which is state[src % n_nodes].
-        node_in_per_edge = gin[active]
+        node_in_per_edge = gin_safe[active]
         # Convert local src within each org to row index.
         org_idx = torch.arange(N, device=self.device).repeat_interleave(
             MAX_CONNS_PER_ORG
@@ -403,7 +417,7 @@ class GpuWorld:
         # Scatter into delta[org_idx, gout].
         # For a 2D tensor (N, n_nodes), torch.scatter_add_ needs linear
         # indices of shape (N*2,) computed as row * n_nodes + col.
-        linear_idx = org_idx * n_nodes + gout[active]
+        linear_idx = org_idx * n_nodes + gout_safe[active]
         delta.view(-1).scatter_add_(0, linear_idx, contribution)
         delta = delta + self.node_bias[alive_idx]
         # Apply activation: tanh(bias + weighted input) for hidden and
