@@ -97,6 +97,15 @@ def main() -> None:
                    default="evolife_phase31_warm_parent.json",
                    help="Warm-start genome JSON (default: parent of first "
                         "cycle_carrier in seed 1, no recurrent edges)")
+    p.add_argument("--neg-energy", type=float, default=None,
+                   help="Override PHASE3_FOOD_A_NEGATIVE_ENERGY and "
+                        "PHASE3_FOOD_B_NEGATIVE_ENERGY for this run. "
+                        "Use -1 to soften the season punishment so the "
+                        "founder has more runway for evolution to find "
+                        "recurrence.")
+    p.add_argument("--repro-threshold", type=float, default=None,
+                   help="Override PHASE3_REPRODUCTION_THRESHOLD for this "
+                        "run. Higher values slow reproduction.")
     args = p.parse_args()
 
     import json
@@ -112,6 +121,23 @@ def main() -> None:
             print(f"warm-json not found: {args.warm_json}, using cold-start")
 
     print(f"Phase 3.1 sweep: ticks={args.ticks} seeds={args.seeds}")
+
+    # Apply optional overrides to the Phase 3 demographic constants.
+    if args.neg_energy is not None or args.repro_threshold is not None:
+        import evolife.config as cfg
+        import evolife.phase3 as ph3
+        overrides = []
+        if args.neg_energy is not None:
+            cfg.PHASE3_FOOD_A_NEGATIVE_ENERGY = args.neg_energy
+            cfg.PHASE3_FOOD_B_NEGATIVE_ENERGY = args.neg_energy
+            ph3.PHASE3_FOOD_A_NEGATIVE_ENERGY = args.neg_energy
+            ph3.PHASE3_FOOD_B_NEGATIVE_ENERGY = args.neg_energy
+            overrides.append(f"PHASE3_NEG={args.neg_energy}")
+        if args.repro_threshold is not None:
+            cfg.PHASE3_REPRODUCTION_THRESHOLD = args.repro_threshold
+            ph3.PHASE3_REPRODUCTION_THRESHOLD = args.repro_threshold
+            overrides.append(f"PHASE3_REPRO_THRESH={args.repro_threshold}")
+        print(f"overrides applied: {', '.join(overrides)}", flush=True)
     print("Three worlds (static_dual / visible_season / hidden_season):")
     print()
 
