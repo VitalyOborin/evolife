@@ -341,18 +341,27 @@ class World:
                 child_id=child_id,
                 child_genome_hash=child_genome.fingerprint(),
             )
-            self._check_milestones(child_genome, child_id)
+            self._check_milestones(child_genome, child_id, parent_genome=org.genome, parent_id=org.id)
         self.organisms.extend(new_organisms)
 
     def _check_milestones(
         self,
         genome: Genome,
         org_id: int,
+        parent_genome: Genome | None = None,
+        parent_id: int | None = None,
     ) -> None:
         """Update Archive with newly-evolved structural features.
 
         This is purely observational: it does not affect fitness,
         reproduction, or survival.
+
+        When `parent_genome` is provided and the child carries a
+        hidden<->hidden cycle, both the cycle carrier and its parent
+        are stored in `archive.cycle_carriers` so the Behavioral Arena
+        can replay them side-by-side. The parent is guaranteed to be
+        cycle-free because the cycle just appeared in the child via
+        structural mutation.
         """
         has_hidden = any(
             n.type.value == "hidden" for n in genome.nodes.values()
@@ -401,6 +410,18 @@ class World:
                     "genome_hash": genome.fingerprint(),
                 },
             )
+            # Capture cycle carrier + parent for later arena comparison.
+            if parent_genome is not None and parent_id is not None:
+                from .archive import CycleCarrier
+                self.archive.cycle_carriers.append(
+                    CycleCarrier(
+                        tick=self.tick,
+                        child_id=org_id,
+                        parent_id=parent_id,
+                        parent_genome=parent_genome,
+                        cycle_genome=genome,
+                    )
+                )
         # Numeric maxima.
         n_nodes = len(genome.nodes)
         self.archive.record_max(

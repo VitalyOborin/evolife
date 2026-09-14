@@ -50,9 +50,11 @@ def main() -> None:
                 # This survives timeout / crash because each call only
                 # inserts new milestones past the high-water mark.
                 metrics.record_archive_milestones(world.archive)
+                metrics.record_cycle_carriers(world.archive)
             metrics.flush_events(world.events)
             metrics.flush_species_events(world.species_manager)
             metrics.record_archive_milestones(world.archive)
+            metrics.record_cycle_carriers(world.archive)
         finally:
             elapsed = time.perf_counter() - t0
             ran = max(world.tick, 1)
@@ -86,7 +88,8 @@ def main() -> None:
                 f"meanE={world.mean_energy():>6.1f}  "
                 f"births={n_births:>5}  deaths={n_deaths:>5}  "
                 f"eats={n_eats:>5}  reproductions={n_repros:>5}  "
-                f"medTrans={world.median_movement_transitions():>5.1f}",
+                f"medTrans={world.median_movement_transitions():>5.1f}  "
+                f"cycles={len(world.archive.cycle_carriers):>2}",
                 flush=True,
             )
             metrics.close()

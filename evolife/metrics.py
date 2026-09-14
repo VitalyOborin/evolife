@@ -125,6 +125,18 @@ CREATE TABLE IF NOT EXISTS archive_milestones (
 );
 CREATE INDEX IF NOT EXISTS archive_milestones_kind_idx ON archive_milestones(kind);
 CREATE INDEX IF NOT EXISTS archive_milestones_tick_idx ON archive_milestones(tick);
+
+CREATE TABLE IF NOT EXISTS cycle_carriers (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick                INTEGER NOT NULL,
+    child_id            INTEGER NOT NULL,
+    parent_id           INTEGER NOT NULL,
+    parent_genome_json  TEXT    NOT NULL,
+    cycle_genome_json   TEXT    NOT NULL,
+    parent_hash         TEXT    NOT NULL,
+    cycle_hash          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cycle_carriers_tick_idx ON cycle_carriers(tick);
 """
 
 
@@ -390,6 +402,45 @@ class Metrics:
         )
         self._conn.commit()
         self._archive_milestone_offset = len(archive.milestones)
+        return len(rows)
+
+    def record_cycle_carriers(self, archive) -> int:
+        """Persist any new CycleCarrier entries (hidden<->hidden cycle
+        born in a child) to the cycle_carriers table. Each entry
+        contains the parent genome and the cycle genome as JSON so the
+        Behavioral Arena can replay the pair without re-running
+        evolution. Returns the number of rows written on this call.
+        """
+        import json as _json
+
+        if not hasattr(self, "_cycle_carrier_offset"):
+            self._cycle_carrier_offset = 0
+        new = archive.cycle_carriers[self._cycle_carrier_offset :]
+        if not new:
+            return 0
+        rows = []
+        for cc in new:
+            rows.append(
+                (
+                    cc.tick,
+                    cc.child_id,
+                    cc.parent_id,
+                    _json.dumps(cc.parent_genome.to_dict()),
+                    _json.dumps(cc.cycle_genome.to_dict()),
+                    cc.parent_genome.fingerprint(),
+                    cc.cycle_genome.fingerprint(),
+                )
+            )
+        self._conn.executemany(
+            "INSERT INTO cycle_carriers ("
+            "tick, child_id, parent_id, parent_genome_json, "
+            "cycle_genome_json, parent_hash, cycle_hash"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+        self._cycle_carrier_offset = len(archive.cycle_carriers)
+        return len(rows)
         return len(rows)
 
 

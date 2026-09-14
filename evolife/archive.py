@@ -38,6 +38,24 @@ class Milestone:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class CycleCarrier:
+    """A child genome that contains a hidden<->hidden cycle plus its
+    parent genome. Stored in the archive so the cycle carrier and its
+    parent (which, by construction, has no cycle) can be replayed
+    side-by-side in the Behavioral Arena to ask "what does the cycle
+    do?".
+
+    The pair is observational only — neither genome is "fitter".
+    """
+
+    tick: int
+    child_id: int
+    parent_id: int
+    parent_genome: Any  # evolife.genome.Genome
+    cycle_genome: Any   # evolife.genome.Genome
+
+
 class Archive:
     """Append-only milestone log."""
 
@@ -47,6 +65,10 @@ class Archive:
         self._fired: set[MilestoneKind] = set()
         # Numeric maxima: keep only the best value seen.
         self._max_values: dict[MilestoneKind, tuple[int, dict[str, Any]]] = {}
+        # Hidden<->hidden cycle carriers with their parent genomes, for
+        # later arena comparison. Captured every time a cycle appears
+        # in a newborn organism, not just the first time.
+        self.cycle_carriers: list[CycleCarrier] = []
 
     def maybe_fire(
         self,

@@ -87,3 +87,55 @@ class Genome:
         )
         h = hashlib.sha1(f"{node_part}|{conn_part}".encode()).hexdigest()
         return h[:16]
+
+    def to_dict(self) -> dict:
+        """Plain-dict JSON-friendly representation.
+
+        Used by the archive to persist carrier genomes for later
+        arena benchmarking. Enum fields are stored as their string
+        value so the JSON is human-readable.
+        """
+        return {
+            "nodes": [
+                {
+                    "id": n.id,
+                    "type": n.type.value,
+                    "activation": n.activation.value,
+                    "bias": n.bias,
+                }
+                for n in sorted(self.nodes.values(), key=lambda x: x.id)
+            ],
+            "connections": [
+                {
+                    "innovation": c.innovation,
+                    "in_node": c.in_node,
+                    "out_node": c.out_node,
+                    "weight": c.weight,
+                    "enabled": c.enabled,
+                }
+                for c in sorted(self.connections.values(), key=lambda x: x.innovation)
+            ],
+            "max_innovation": self.max_innovation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Genome":
+        """Inverse of `to_dict`. Builds a Genome from a JSON-ready dict."""
+        g = cls()
+        for nd in data.get("nodes", []):
+            g.nodes[nd["id"]] = NodeGene(
+                id=nd["id"],
+                type=NodeType(nd["type"]),
+                activation=Activation(nd["activation"]),
+                bias=nd["bias"],
+            )
+        for cd in data.get("connections", []):
+            g.connections[cd["innovation"]] = ConnectionGene(
+                innovation=cd["innovation"],
+                in_node=cd["in_node"],
+                out_node=cd["out_node"],
+                weight=cd["weight"],
+                enabled=cd["enabled"],
+            )
+        g.max_innovation = data.get("max_innovation", 0)
+        return g
