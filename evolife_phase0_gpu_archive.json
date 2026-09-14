@@ -1,0 +1,19 @@
+{
+  "summary": {
+    "seeds": 1,
+    "ticks": 50000,
+    "extinct": 1,
+    "median_pop": 0
+  },
+  "runs": [
+    {
+      "seed": 1,
+      "n_ticks": 50000,
+      "elapsed_s": 175.26643499999773,
+      "rate_per_s": 285.279951064222,
+      "final_pop": 0,
+      "milestone_kind_counts": {},
+      "milestone_first_tick_by_kind": {}
+    }
+  ]
+}
