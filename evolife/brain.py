@@ -1,20 +1,15 @@
-"""Recurrent brain with persistent state.
+"""Brain — persistent-state executor that supports arbitrary topology.
 
 v2: each organism owns a Brain whose state (node activations) persists
-across ticks. Forward pass:
+across ticks. The executor supports cycles, hidden->sensor (its value
+is overwritten next tick by sensor input), motor->hidden, etc.
 
-  1. Load sensors into state[:N_SENSORS].
-  2. Compute delta for each non-sensor node as
-        delta[j] = bias[j] + sum_{(i -> j) active} state[i] * w
-  3. Apply activation to delta[j], write back as state[j].
-  4. Read motors.
-
-This correctly supports arbitrary topology: cycles, hidden->sensor
-(its value is overwritten next tick by sensor input — fine), motor->hidden,
-etc.
-
-The compiled view (node ordering, sparse indices, weights, biases) is
-cached and only rebuilt when the genome changes — i.e. once at birth.
+Crucially, v2.2 founders are PURE FEEDFORWARD: no hidden nodes, no
+recurrent edges. Recurrent dynamics can only arise via structural
+mutation (add_connection or add_node). This is intentional: we want
+recurrent circuitry to be an EMERGENT property of evolution, not a
+gift from the developer. If a lineage ever evolves `sensor -> hidden
+-> motor` plus a cycle, that is a milestone, not a baseline.
 """
 
 from __future__ import annotations
@@ -38,8 +33,10 @@ _ACT_SIGMOID = 2
 _ACT_RELU = 3
 
 # One brain update per world tick. Extra iterations push a recurrent
-# net toward its attractor inside a single physical step and decouple
-# internal time from world time. Motor lag of one tick is intended.
+# net toward its attractor inside a single physical step. v2.2 keeps
+# this at 1: founder networks are feedforward so attractor dynamics
+# do not apply, and we want each tick to correspond to one world
+# observation, not several. Motor lag of one tick is intended.
 _ITERATIONS = 1
 
 
@@ -67,7 +64,12 @@ class _CompiledNet:
 
 
 class Brain:
-    """A recurrent, persistent, genome-driven brain."""
+    """A persistent, genome-driven brain.
+
+    Topology is read from the genome; the executor handles arbitrary
+    connectivity including cycles, but v2.2 founders start feedforward.
+    Recurrence is an emergent property, not a default.
+    """
 
     def __init__(self, genome: Genome) -> None:
         self.genome = genome

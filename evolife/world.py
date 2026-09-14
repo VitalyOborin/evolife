@@ -48,6 +48,7 @@ from .config import (
     WORLD_HEIGHT,
     WORLD_WIDTH,
 )
+from .archive import Archive, MilestoneKind
 from .events import EventLog
 from .genome import Genome
 from .innovation import InnovationDatabase
@@ -82,6 +83,7 @@ class World:
         self.rng = np.random.default_rng(seed)
         self.innovations = InnovationDatabase()
         self.events = events if events is not None else EventLog()
+        self.archive = Archive()
         self.tick: int = 0
         self.organisms: list[Organism] = []
         self.food: list[Food] = []
@@ -191,6 +193,9 @@ class World:
 
         # 6. Reproduction.
         self._reproduce()
+
+        # 7. Archive updates (observability only).
+        self._archive_tick_end()
 
     # --- per-organism action ----------------------------------------------
 
@@ -310,7 +315,88 @@ class World:
                 child_id=child_id,
                 child_genome_hash=child_genome.fingerprint(),
             )
+            self._check_milestones(child_genome, child_id)
         self.organisms.extend(new_organisms)
+
+    def _check_milestones(
+        self,
+        genome: Genome,
+        org_id: int,
+    ) -> None:
+        """Update Archive with newly-evolved structural features.
+
+        This is purely observational: it does not affect fitness,
+        reproduction, or survival.
+        """
+        has_hidden = any(
+            n.type.value == "hidden" for n in genome.nodes.values()
+        )
+        if has_hidden:
+            self.archive.maybe_fire(
+                MilestoneKind.FIRST_HIDDEN_NODE,
+                self.tick,
+                value=1,
+                payload={
+                    "org_id": org_id,
+                    "genome_hash": genome.fingerprint(),
+                },
+            )
+        # Recurrent cycle: two enabled connections A -> B and B -> A
+        # between non-sensor nodes.
+        edges = {
+            (c.in_node, c.out_node)
+            for c in genome.connections.values()
+            if c.enabled
+        }
+        has_cycle = False
+        for a, b in edges:
+            if (b, a) in edges and a != b:
+                has_cycle = True
+                break
+        if has_cycle:
+            self.archive.maybe_fire(
+                MilestoneKind.FIRST_RECURRENT_CYCLE,
+                self.tick,
+                value=1,
+                payload={
+                    "org_id": org_id,
+                    "genome_hash": genome.fingerprint(),
+                },
+            )
+        # Numeric maxima.
+        n_nodes = len(genome.nodes)
+        self.archive.record_max(
+            MilestoneKind.MAX_BRAIN_NODES,
+            self.tick,
+            n_nodes,
+            payload={
+                "org_id": org_id,
+                "genome_hash": genome.fingerprint(),
+            },
+        )
+
+    def _archive_tick_end(self) -> None:
+        """Run archive updates that depend on the whole population."""
+        alive = [o for o in self.organisms if o.alive]
+        if not alive:
+            return
+        max_gen = max(o.generation for o in alive)
+        self.archive.record_max(
+            MilestoneKind.MAX_GENERATION_REACHED,
+            self.tick,
+            max_gen,
+        )
+        # Largest founder lineage by alive count.
+        from collections import Counter
+        counts = Counter(o.founder_lineage_id for o in alive)
+        if counts:
+            top_lineage, top_size = max(counts.items(), key=lambda kv: kv[1])
+            self.archive.record_max(
+                MilestoneKind.MAX_LINEAGE_SIZE,
+                self.tick,
+                top_size,
+                payload={"lineage_id": int(top_lineage)},
+            )
 
     def _mutate(self, genome: Genome) -> Genome:
         g = mutate_weights(genome, self.rng)

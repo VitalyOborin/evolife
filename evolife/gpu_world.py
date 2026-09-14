@@ -55,6 +55,7 @@ from .config import (
     SMELL_HALF_ANGLE,
     TURN_ENERGY_COST,
 )
+from .archive import Archive, MilestoneKind
 from .events import Event, EventKind, EventLog
 from .genome import Genome
 from .gpu_sensors import GpuSmellField
@@ -92,6 +93,7 @@ class GpuWorld:
         )
         self.rng = np.random.default_rng(seed)
         self.events = events if events is not None else EventLog()
+        self.archive = Archive()
         self.pop_cap = pop_cap
 
         # Population tensors, all on GPU.
@@ -583,8 +585,55 @@ class GpuWorld:
             self.brain_state[free].zero_()
             # Deduct parent energy.
             self.energy[slot] = self.energy[slot] - REPRODUCTION_ENERGY
+            # Archive milestones (observability only).
+            self._check_milestones_gpu(free)
+            # Archive milestones (observability only).
+            self._check_milestones_gpu(free)
 
     # --- diagnostics -------------------------------------------------------
+
+    def _check_milestones_gpu(self, slot: int) -> None:
+        """Check structural milestones for the new child in `slot`.
+
+        Cheaply inspects the gene tensor: a node is "hidden" if its
+        id is between N_SENSORS and N_SENSORS+N_HIDDEN. For now we
+        only flag FIRST_HIDDEN_NODE and FIRST_RECURRENT_CYCLE.
+        """
+        gin = self.gene_in[slot]
+        gout = self.gene_out[slot]
+        gen = self.gene_enabled[slot]
+        active = gen.nonzero(as_tuple=False).squeeze(1)
+        if active.numel() == 0:
+            return
+        in_ids = gin[active]
+        out_ids = gout[active]
+        hidden_lo = N_SENSORS
+        hidden_hi = N_SENSORS + N_HIDDEN
+        has_hidden = bool(
+            ((in_ids >= hidden_lo) & (in_ids < hidden_hi)).any().item()
+            or ((out_ids >= hidden_lo) & (out_ids < hidden_hi)).any().item()
+        )
+        if has_hidden:
+            self.archive.maybe_fire(
+                MilestoneKind.FIRST_HIDDEN_NODE,
+                self.tick,
+                value=1,
+                payload={"slot": slot},
+            )
+        # Recurrent cycle: two connections A->B and B->A both enabled.
+        pairs = set(
+            (int(a), int(b))
+            for a, b in zip(in_ids.tolist(), out_ids.tolist())
+        )
+        for a, b in list(pairs):
+            if (b, a) in pairs and a != b:
+                self.archive.maybe_fire(
+                    MilestoneKind.FIRST_RECURRENT_CYCLE,
+                    self.tick,
+                    value=1,
+                    payload={"slot": slot},
+                )
+                break
 
     def population(self) -> int:
         return int(self.alive_mask.sum().item())
