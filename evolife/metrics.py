@@ -10,7 +10,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Iterable
 
-from .config import METRICS_DB_PATH, METRICS_ORGANISM_EVERY, METRICS_WORLD_EVERY
+from .behavior import descriptors
+from .config import (
+    METRICS_BEHAVIOR_EVERY,
+    METRICS_DB_PATH,
+    METRICS_ORGANISM_EVERY,
+    METRICS_SPECIES_EVERY,
+    METRICS_WORLD_EVERY,
+)
 from .organism import Organism
 from .world import World
 from .genome import Genome
@@ -61,6 +68,53 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_tick_idx ON events(tick);
 CREATE INDEX IF NOT EXISTS events_kind_idx ON events(kind);
+
+CREATE TABLE IF NOT EXISTS species_snapshots (
+    tick                       INTEGER NOT NULL,
+    species_id                 INTEGER NOT NULL,
+    member_count               INTEGER NOT NULL,
+    peak_population            INTEGER NOT NULL,
+    born_tick                  INTEGER NOT NULL,
+    last_seen_tick             INTEGER NOT NULL,
+    parent_species_id          INTEGER,
+    extinct                    INTEGER NOT NULL,
+    representative_genome_hash TEXT,
+    PRIMARY KEY (tick, species_id)
+);
+
+CREATE TABLE IF NOT EXISTS behavior_snapshots (
+    tick                     INTEGER NOT NULL,
+    organism_id              INTEGER NOT NULL,
+    species_id               INTEGER NOT NULL,
+    moving_fraction          REAL    NOT NULL,
+    transition_rate          REAL    NOT NULL,
+    mean_speed               REAL    NOT NULL,
+    mean_speed_while_moving  REAL    NOT NULL,
+    mean_rest_bout           REAL    NOT NULL,
+    mean_move_bout           REAL    NOT NULL,
+    longest_rest             REAL    NOT NULL,
+    longest_move             REAL    NOT NULL,
+    food_rate                REAL    NOT NULL,
+    distance_per_food        REAL    NOT NULL,
+    time_to_first_food       REAL    NOT NULL,
+    mean_abs_turn            REAL    NOT NULL,
+    turns_per_distance       REAL    NOT NULL,
+    exploration_rate         REAL    NOT NULL,
+    steering_alignment       REAL    NOT NULL,
+    state_dependence         REAL    NOT NULL,
+    PRIMARY KEY (tick, organism_id)
+);
+
+CREATE TABLE IF NOT EXISTS species_events (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick                         INTEGER NOT NULL,
+    species_id                   INTEGER NOT NULL,
+    kind                         TEXT    NOT NULL,
+    parent_species_id            INTEGER,
+    founder_organism_id          INTEGER,
+    representative_genome_hash   TEXT
+);
+CREATE INDEX IF NOT EXISTS species_events_tick_idx ON species_events(tick);
 """
 
 
@@ -72,6 +126,7 @@ class Metrics:
         self._conn = sqlite3.connect(path)
         self._conn.executescript(_SCHEMA)
         self._migrate_organism_snapshots()
+        self._species_event_offset = 0
         self._conn.commit()
 
     def _migrate_organism_snapshots(self) -> None:
@@ -156,6 +211,82 @@ class Metrics:
         )
         self._conn.commit()
 
+    def record_species(self, world: World) -> None:
+        if world.tick % METRICS_SPECIES_EVERY != 0:
+            return
+        rows = []
+        for sp in world.species_manager.species.values():
+            rows.append(
+                (
+                    world.tick,
+                    sp.id,
+                    sp.member_count,
+                    sp.peak_population,
+                    sp.born_tick,
+                    sp.last_seen_tick,
+                    sp.parent_species_id,
+                    int(sp.extinct),
+                    sp.representative.fingerprint(),
+                )
+            )
+        if not rows:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO species_snapshots ("
+            "tick, species_id, member_count, peak_population, born_tick, "
+            "last_seen_tick, parent_species_id, extinct, "
+            "representative_genome_hash"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+
+    def record_behavior(
+        self, world: World, organisms: Iterable[Organism]
+    ) -> None:
+        if world.tick % METRICS_BEHAVIOR_EVERY != 0:
+            return
+        rows = []
+        for o in organisms:
+            d = descriptors(o)
+            rows.append(
+                (
+                    world.tick,
+                    o.id,
+                    o.species_id,
+                    d["moving_fraction"],
+                    d["transition_rate"],
+                    d["mean_speed"],
+                    d["mean_speed_while_moving"],
+                    d["mean_rest_bout"],
+                    d["mean_move_bout"],
+                    d["longest_rest"],
+                    d["longest_move"],
+                    d["food_rate"],
+                    d["distance_per_food"],
+                    d["time_to_first_food"],
+                    d["mean_abs_turn"],
+                    d["turns_per_distance"],
+                    d["exploration_rate"],
+                    d["steering_alignment"],
+                    d["state_dependence"],
+                )
+            )
+        if not rows:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO behavior_snapshots ("
+            "tick, organism_id, species_id, moving_fraction, transition_rate, "
+            "mean_speed, mean_speed_while_moving, mean_rest_bout, "
+            "mean_move_bout, longest_rest, longest_move, food_rate, "
+            "distance_per_food, time_to_first_food, mean_abs_turn, "
+            "turns_per_distance, exploration_rate, steering_alignment, "
+            "state_dependence"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+
     def flush_events(self, events) -> None:
         """Persist events from an EventLog to the events table."""
         rows = []
@@ -182,6 +313,32 @@ class Metrics:
             rows,
         )
         self._conn.commit()
+
+    def flush_species_events(self, manager) -> None:
+        """Persist SpeciesManager origin/extinction events."""
+        events = manager.events[self._species_event_offset :]
+        if not events:
+            return
+        rows = [
+            (
+                e.tick,
+                e.species_id,
+                e.kind,
+                e.parent_species_id,
+                e.founder_organism_id,
+                e.representative_genome_hash,
+            )
+            for e in events
+        ]
+        self._conn.executemany(
+            "INSERT INTO species_events ("
+            "tick, species_id, kind, parent_species_id, "
+            "founder_organism_id, representative_genome_hash"
+            ") VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+        self._species_event_offset = len(manager.events)
 
 
 def _locomotion_bias_over_weights(genome: Genome) -> float:

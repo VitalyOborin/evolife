@@ -26,5 +26,24 @@ def test_innovation_is_deterministic_across_reset():
     db2.innovation_for(1, 2)
     db2.innovation_for(2, 3)
     db2.innovation_for(1, 2)
-    assert db1._next == db2._next
+    assert db1._next_conn == db2._next_conn
     assert db1._by_pair == db2._by_pair
+
+
+def test_split_reuses_node_and_edges_for_same_historical_connection():
+    db = InnovationDatabase()
+    orig = db.innovation_for(0, 3)
+    a = db.split_for(orig, 0, 3)
+    b = db.split_for(orig, 0, 3)
+    assert a == b
+    assert a.new_node_id == 4
+
+
+def test_split_of_different_connections_gets_different_node_ids():
+    db = InnovationDatabase()
+    i1 = db.innovation_for(0, 3)
+    i2 = db.innovation_for(1, 3)
+    a = db.split_for(i1, 0, 3)
+    b = db.split_for(i2, 1, 3)
+    assert a.new_node_id != b.new_node_id
+    assert a.in_innovation != b.in_innovation

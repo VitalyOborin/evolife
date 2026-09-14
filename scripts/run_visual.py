@@ -28,6 +28,8 @@ def main() -> None:
             world.step()
             metrics.record_world(world)
             metrics.record_organisms(world, world.organisms)
+            metrics.record_species(world)
+            metrics.record_behavior(world, world.organisms)
             viz.render()
     finally:
         metrics.close()

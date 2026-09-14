@@ -223,33 +223,33 @@ def mutate_add_node(
             c.enabled = False
             break
 
-    # Allocate a new hidden node id.
-    new_node_id = max(new.nodes.keys()) + 1 if new.nodes else 0
-    new.nodes[new_node_id] = NodeGene(
-        id=new_node_id,
+    split = innovations.split_for(
+        target.innovation, target.in_node, target.out_node
+    )
+    new.nodes[split.new_node_id] = NodeGene(
+        id=split.new_node_id,
         type=NodeType.HIDDEN,
         activation=Activation.TANH,
         bias=0.0,
     )
 
-    in_innov = innovations.innovation_for(target.in_node, new_node_id)
-    out_innov = innovations.innovation_for(new_node_id, target.out_node)
-
-    new.connections[in_innov] = ConnectionGene(
-        innovation=in_innov,
+    new.connections[split.in_innovation] = ConnectionGene(
+        innovation=split.in_innovation,
         in_node=target.in_node,
-        out_node=new_node_id,
+        out_node=split.new_node_id,
         weight=1.0,
         enabled=True,
     )
-    new.connections[out_innov] = ConnectionGene(
-        innovation=out_innov,
-        in_node=new_node_id,
+    new.connections[split.out_innovation] = ConnectionGene(
+        innovation=split.out_innovation,
+        in_node=split.new_node_id,
         out_node=target.out_node,
         weight=target.weight,
         enabled=True,
     )
-    new.max_innovation = max(new.max_innovation, in_innov, out_innov)
+    new.max_innovation = max(
+        new.max_innovation, split.in_innovation, split.out_innovation
+    )
     return new
 
 

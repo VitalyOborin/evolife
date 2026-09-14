@@ -44,7 +44,10 @@ def main() -> None:
                 world.step()
                 metrics.record_world(world)
                 metrics.record_organisms(world, world.organisms)
+                metrics.record_species(world)
+                metrics.record_behavior(world, world.organisms)
             metrics.flush_events(world.events)
+            metrics.flush_species_events(world.species_manager)
         finally:
             elapsed = time.perf_counter() - t0
             ran = max(world.tick, 1)
@@ -73,6 +76,7 @@ def main() -> None:
                 f"seed={seed:>3}  ticks={world.tick}/{args.ticks}  elapsed={elapsed:.1f}s  "
                 f"rate={rate:.1f}/s  pop={pop:>3}  "
                 f"maxGen={max_gen:>3}  lin={world.n_lineages():>3}  "
+                f"nSp={world.n_species():>3}  "
                 f"meanE={world.mean_energy():>6.1f}  "
                 f"births={n_births:>5}  deaths={n_deaths:>5}  "
                 f"eats={n_eats:>5}  reproductions={n_repros:>5}  "

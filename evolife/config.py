@@ -196,6 +196,34 @@ METRICS_WORLD_EVERY: int = 50
 # absolute.
 METRICS_DB_PATH: str = "evolife_metrics.sqlite"
 
+# Ticks between species / behavior snapshots.
+METRICS_SPECIES_EVERY: int = 50
+METRICS_BEHAVIOR_EVERY: int = 100
+
+
+# --- Speciation (observational taxonomy only) ------------------------------
+
+# Compatibility distance weights. Excess/disjoint are NOT divided by
+# genome size: one new connection should matter on these small brains.
+COMPAT_C_EXCESS: float = 1.0
+COMPAT_C_DISJOINT: float = 1.0
+COMPAT_C_WEIGHT: float = 0.4
+COMPAT_C_BIAS: float = 0.2
+
+# Child joins parent species if distance to its representative is
+# at most this; otherwise we search other living species or originate.
+SPECIES_THRESHOLD: float = 3.0
+
+# How often to refresh each living species' representative genome.
+SPECIES_REPRESENTATIVE_EVERY: int = 500
+
+# Spatial bin size (cells) for exploration_rate.
+EXPLORE_BIN: int = 16
+
+# |turn| above this (radians/tick) counts as TURN_LEFT / TURN_RIGHT
+# rather than FORWARD for state-dependence.
+TURN_ACTION_THRESHOLD: float = 0.05
+
 
 @dataclass(frozen=True)
 class V0Summary:

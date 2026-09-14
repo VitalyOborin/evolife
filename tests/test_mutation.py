@@ -108,6 +108,22 @@ def test_add_node_reuses_innovation_when_pair_already_seen():
     assert len(new2.nodes) >= n_nodes_after_first + 1
 
 
+def test_add_node_reuses_split_ids_for_the_same_historical_connection():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    innov = InnovationDatabase()
+    for c in g.connections.values():
+        innov.innovation_for(c.in_node, c.out_node)
+    a = mutate_add_node(g, np.random.default_rng(1), innov, rate=1.0)
+    b = mutate_add_node(g, np.random.default_rng(1), innov, rate=1.0)
+    hidden_a = sorted(n.id for n in a.nodes.values() if n.type.value == "hidden")
+    hidden_b = sorted(n.id for n in b.nodes.values() if n.type.value == "hidden")
+    assert hidden_a == hidden_b
+    assert hidden_a
+    new_a = set(a.connections) - set(g.connections)
+    new_b = set(b.connections) - set(g.connections)
+    assert new_a == new_b
+
+
 def test_toggle_connection_flips_some_enabled_state():
     g = Brain.make_default_genome()
     enabled_before = [c.enabled for c in g.connections.values()]

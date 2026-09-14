@@ -23,7 +23,10 @@ def main() -> None:
             world.step()
             metrics.record_world(world)
             metrics.record_organisms(world, world.organisms)
+            metrics.record_species(world)
+            metrics.record_behavior(world, world.organisms)
         metrics.flush_events(world.events)
+        metrics.flush_species_events(world.species_manager)
     finally:
         elapsed = time.perf_counter() - start
         rate = args.ticks / elapsed if elapsed > 0 else float("inf")

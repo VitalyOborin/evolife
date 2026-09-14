@@ -49,9 +49,11 @@ from .config import (
     locomotion_speed,
 )
 from .archive import Archive, MilestoneKind
+from .behavior import note_act
 from .events import EventLog
 from .genome import Genome
 from .innovation import InnovationDatabase
+from .speciation import SpeciesManager
 from .mutation import (
     mutate_add_connection,
     mutate_add_node,
@@ -83,6 +85,7 @@ class World:
         self.height = height
         self.rng = np.random.default_rng(seed)
         self.innovations = InnovationDatabase()
+        self.species_manager = SpeciesManager()
         self.events = events if events is not None else EventLog()
         self.archive = Archive()
         self.tick: int = 0
@@ -93,6 +96,7 @@ class World:
 
         for _ in range(INITIAL_POPULATION):
             self._spawn_founder()
+        self.species_manager.sync(self.organisms, self.tick)
 
         while len(self.food) < FOOD_TARGET:
             self._spawn_food()
@@ -132,6 +136,9 @@ class World:
             genome=genome,
             generation=0,
             founder_lineage_id=oid,
+        )
+        org.species_id = self.species_manager.assign(
+            genome, self.tick, oid, parent_species_id=None
         )
         self.organisms.append(org)
         self.events.record_birth(
@@ -195,7 +202,13 @@ class World:
         # 6. Reproduction.
         self._reproduce()
 
-        # 7. Archive updates (observability only).
+        # 7. Observational taxonomy: counts, extinctions, representatives.
+        self.species_manager.sync(self.organisms, self.tick)
+        self.species_manager.maybe_refresh_representatives(
+            self.organisms, self.tick
+        )
+
+        # 8. Archive updates (observability only).
         self._archive_tick_end()
 
     # --- per-organism action ----------------------------------------------
@@ -219,7 +232,7 @@ class World:
         org.heading = (org.heading + turn) % (2 * np.pi)
         org.x = (org.x + np.cos(org.heading) * move) % self.width
         org.y = (org.y + np.sin(org.heading) * move) % self.height
-        org.note_locomotion(move)
+        note_act(org, sensors, turn, move, self.width, self.height)
 
         # Automatic contact eating: any food within EAT_RADIUS is eaten.
         # No motor required.
@@ -265,6 +278,8 @@ class World:
                 eaten_food = self.food.pop(idx)
                 org.energy += FOOD_ENERGY
                 org.food_eaten += 1
+                if org.time_to_first_food is None:
+                    org.time_to_first_food = org.age
                 out.append((org, (eaten_food.x, eaten_food.y)))
         return out
 
@@ -311,6 +326,12 @@ class World:
                 parent_id=org.id,
                 generation=org.generation + 1,
                 founder_lineage_id=org.founder_lineage_id,
+            )
+            child.species_id = self.species_manager.assign(
+                child_genome,
+                self.tick,
+                child_id,
+                parent_species_id=org.species_id,
             )
             new_organisms.append(child)
             org.children += 1
@@ -444,6 +465,9 @@ class World:
         return len(
             {o.founder_lineage_id for o in self.organisms if o.alive}
         )
+
+    def n_species(self) -> int:
+        return len(self.species_manager.living())
 
     def median_movement_transitions(self) -> float:
         alive = [o.movement_transitions for o in self.organisms if o.alive]

@@ -49,7 +49,7 @@ class Visualizer:
                 continue
             pygame.draw.circle(
                 self.screen,
-                (220, 220, 240),
+                _species_color(org.species_id),
                 (int(org.x), int(org.y)),
                 ORGANISM_RADIUS,
             )
@@ -59,14 +59,31 @@ class Visualizer:
             f"food={len(self.world.food)}  "
             f"meanE={self.world.mean_energy():.1f}  "
             f"maxGen={self.world.max_generation()}  "
-            f"lin={self.world.n_lineages()}",
+            f"lin={self.world.n_lineages()}  "
+            f"nSp={self.world.n_species()}",
             True,
             (255, 255, 255),
         )
         self.screen.blit(hud, (4, 4))
+        living = sorted(
+            self.world.species_manager.living(),
+            key=lambda s: (-s.member_count, s.id),
+        )
+        top = "  ".join(f"s{s.id}:{s.member_count}" for s in living[:6])
+        if top:
+            hud2 = self.font.render(f"Species  {top}", True, (200, 200, 210))
+            self.screen.blit(hud2, (4, 20))
 
         pygame.display.flip()
         self.clock.tick(FPS_TARGET)
 
     def close(self) -> None:
         pygame.quit()
+
+
+def _species_color(species_id: int) -> tuple[int, int, int]:
+    """Stable HSV color from species_id (golden-angle hue)."""
+    c = pygame.Color(0)
+    hue = (int(species_id) * 137.508) % 360.0
+    c.hsva = (hue, 65, 95, 100)
+    return (c.r, c.g, c.b)
