@@ -142,12 +142,19 @@ WEIGHT_REPLACE_SIGMA: float = 1.0
 # Hard clamp on absolute weight magnitude, post-mutation.
 WEIGHT_MAX: float = 5.0
 
-# Per-birth probability of structural mutations. Kept rare until a
-# food-seeking population is stable — first prove weights of the
-# proto-brain can evolve.
-ADD_NODE_RATE: float = 0.002
-ADD_CONNECTION_RATE: float = 0.005
-TOGGLE_CONNECTION_RATE: float = 0.002
+# Per-birth probability of structural mutations. Phase 1 levels:
+# now that a stable food-seeking population is reproducing
+# consistently (Phase 0 baseline), increase the rate at which new
+# topology can appear. With ~1500 reproductions per seed in 10k
+# ticks at Phase 0, these rates give roughly:
+#   add_node:        ~120 per seed -> frequent hidden node origin
+#   add_connection:  ~180 per seed -> wiring rewiring
+#   toggle:          ~30  per seed -> pruning
+# A hidden-hidden cycle (need 1 add_node + 2 add_connections) is
+# expected in ~1-2 seeds out of 5 across 50k ticks.
+ADD_NODE_RATE: float = 0.08
+ADD_CONNECTION_RATE: float = 0.12
+TOGGLE_CONNECTION_RATE: float = 0.02
 
 
 # --- Selection (natural) ---------------------------------------------------
