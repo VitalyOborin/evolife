@@ -24,16 +24,16 @@ FOOD_TARGET: int = 400
 FOOD_REGROWTH_RATE: float = 0.002
 
 # Energy gained from eating one food particle.
-FOOD_ENERGY: float = 25.0
+FOOD_ENERGY: float = 40.0
 
 # Energy passively drained per tick just for being alive.
-IDLE_ENERGY_COST: float = 0.05
+IDLE_ENERGY_COST: float = 0.01
 
 # Energy cost per unit of forward motion per tick.
-MOVE_ENERGY_COST: float = 0.10
+MOVE_ENERGY_COST: float = 0.08
 
 # Energy cost per radian of turning per tick.
-TURN_ENERGY_COST: float = 0.02
+TURN_ENERGY_COST: float = 0.03
 
 
 # --- Organism --------------------------------------------------------------
