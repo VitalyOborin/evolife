@@ -13,6 +13,7 @@ Success for this stage is not "smart navigation". It is:
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import time
 
@@ -31,6 +32,7 @@ def main() -> None:
     births: list[int] = []
     repros: list[int] = []
     eats: list[int] = []
+    archive_per_seed: dict[int, list] = {}
 
     for seed in args.seeds:
         path = f"evolife_metrics_seed{seed}.sqlite"
@@ -59,6 +61,14 @@ def main() -> None:
             births.append(n_births)
             repros.append(n_repros)
             eats.append(n_eats)
+            archive_per_seed[seed] = [
+                {
+                    "kind": m.kind.value,
+                    "tick": m.tick,
+                    "payload": m.payload,
+                }
+                for m in world.archive.milestones
+            ]
             print(
                 f"seed={seed:>3}  ticks={world.tick}/{args.ticks}  elapsed={elapsed:.1f}s  "
                 f"rate={rate:.1f}/s  pop={pop:>3}  "
@@ -81,6 +91,29 @@ def main() -> None:
         f"median_eats={_med(eats):.0f}",
         flush=True,
     )
+
+    # Aggregate archive milestones across seeds.
+    milestone_counts: dict[str, int] = {}
+    milestone_firsts: dict[str, list[int]] = {}
+    for seed, milestones in archive_per_seed.items():
+        for m in milestones:
+            milestone_counts[m["kind"]] = milestone_counts.get(m["kind"], 0) + 1
+            milestone_firsts.setdefault(m["kind"], []).append(m["tick"])
+
+    archive_summary = {
+        "milestone_kind_counts": milestone_counts,
+        "milestone_first_tick_by_seed": milestone_firsts,
+        "milestone_total": sum(milestone_counts.values()),
+    }
+    out_path = "evolife_phase0_archive.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(archive_summary, f, indent=2, default=str)
+    print(
+        f"archive summary: total_milestones={archive_summary['milestone_total']}  "
+        f"by_kind={milestone_counts}",
+        flush=True,
+    )
+    print(f"archive written to {out_path}")
 
 
 if __name__ == "__main__":

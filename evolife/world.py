@@ -342,7 +342,11 @@ class World:
                 },
             )
         # Recurrent cycle: two enabled connections A -> B and B -> A
-        # between non-sensor nodes.
+        # both enabled, where both A and B are hidden nodes.
+        # Cycles through sensors or motors are trivial wiring
+        # artefacts (motor->sensor just feeds back to a sensor input)
+        # and do not constitute internal memory.
+        node_types = {n.id: n.type for n in genome.nodes.values()}
         edges = {
             (c.in_node, c.out_node)
             for c in genome.connections.values()
@@ -351,8 +355,16 @@ class World:
         has_cycle = False
         for a, b in edges:
             if (b, a) in edges and a != b:
-                has_cycle = True
-                break
+                ta = node_types.get(a)
+                tb = node_types.get(b)
+                if (
+                    ta is not None
+                    and tb is not None
+                    and ta.value == "hidden"
+                    and tb.value == "hidden"
+                ):
+                    has_cycle = True
+                    break
         if has_cycle:
             self.archive.maybe_fire(
                 MilestoneKind.FIRST_RECURRENT_CYCLE,

@@ -620,20 +620,22 @@ class GpuWorld:
                 value=1,
                 payload={"slot": slot},
             )
-        # Recurrent cycle: two connections A->B and B->A both enabled.
+        # Recurrent cycle between two HIDDEN nodes. Cycles through
+        # sensors or motors are trivial wiring artefacts, not memory.
         pairs = set(
             (int(a), int(b))
             for a, b in zip(in_ids.tolist(), out_ids.tolist())
         )
         for a, b in list(pairs):
             if (b, a) in pairs and a != b:
-                self.archive.maybe_fire(
-                    MilestoneKind.FIRST_RECURRENT_CYCLE,
-                    self.tick,
-                    value=1,
-                    payload={"slot": slot},
-                )
-                break
+                if hidden_lo <= a < hidden_hi and hidden_lo <= b < hidden_hi:
+                    self.archive.maybe_fire(
+                        MilestoneKind.FIRST_RECURRENT_CYCLE,
+                        self.tick,
+                        value=1,
+                        payload={"slot": slot},
+                    )
+                    break
 
     def population(self) -> int:
         return int(self.alive_mask.sum().item())
