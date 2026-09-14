@@ -16,7 +16,7 @@ WORLD_WIDTH: int = 512
 WORLD_HEIGHT: int = 512
 
 # How many food particles the world tries to maintain.
-FOOD_TARGET: int = 400
+FOOD_TARGET: int = 200
 
 # Per-tick binomial probability that each missing food particle respawns.
 # Expected new food = (FOOD_TARGET - current) * FOOD_REGROWTH_RATE.
@@ -24,13 +24,13 @@ FOOD_TARGET: int = 400
 FOOD_REGROWTH_RATE: float = 0.002
 
 # Energy gained from eating one food particle.
-FOOD_ENERGY: float = 30.0
+FOOD_ENERGY: float = 40.0
 
 # Energy passively drained per tick just for being alive.
 IDLE_ENERGY_COST: float = 0.02
 
 # Energy cost per unit of forward motion per tick.
-MOVE_ENERGY_COST: float = 0.10
+MOVE_ENERGY_COST: float = 0.05
 
 # Energy cost per radian of turning per tick.
 TURN_ENERGY_COST: float = 0.05
@@ -43,7 +43,7 @@ TURN_ENERGY_COST: float = 0.05
 POPULATION_CAP: int = 500
 
 # Initial organism count when the world boots.
-INITIAL_POPULATION: int = 100
+INITIAL_POPULATION: int = 50
 
 # Energy a newborn organism starts with. Equal to FOOD_ENERGY so a fresh
 # organism has one meal of buffer against starvation.
@@ -51,7 +51,7 @@ INITIAL_ENERGY: float = FOOD_ENERGY*2
 
 # Energy threshold above which an organism reproduces. After one successful
 # meal a proto-organism should already be close to replication.
-REPRODUCTION_THRESHOLD: float = 48.0
+REPRODUCTION_THRESHOLD: float = 64.0
 
 # Energy transferred to the child on reproduction (subtracted from parent).
 REPRODUCTION_ENERGY: float = 24.0
