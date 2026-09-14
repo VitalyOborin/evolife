@@ -37,6 +37,12 @@ FOOD_REGROWTH_RATE: float = 0.002
 # Energy gained from eating one food particle.
 FOOD_ENERGY: float = 40.0
 
+# Phase 3: edge weight from the feedback sensor into the (single) hidden
+# node. Held constant at 1.0 in v3.0; planned to become a heritable gene
+# in v3.1. The feedback sensor carries the recent intake signal
+# (intake_feedback, in {-1, 0, +1}).
+FB_TO_HIDDEN_WEIGHT: float = 1.0
+
 # Phase 3: signed reward magnitudes. Eating FoodA in season 0 gives +25; in
 # season 1 the *same* smell yields -10. Energy delta is what the organism
 # experiences — it cannot sense season directly, only via intake feedback.

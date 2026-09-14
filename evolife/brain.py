@@ -85,22 +85,27 @@ class Brain:
         self.state: np.ndarray | None = None
 
     def forward(self, sensors: np.ndarray) -> np.ndarray:
-        if sensors.shape != (N_SENSORS,):
+        net = self._ensure_compiled()
+
+        # Sensor count comes from the *compiled* net, not the global
+        # config. Phase 3 founder has 7 sensor nodes (6 smell + 1
+        # feedback); legacy founder has 3. The expected sensor vector
+        # length equals the number of sensor nodes in the topology.
+        n_sensor = int(net.is_sensor.sum())
+        if sensors.shape != (n_sensor,):
             raise ValueError(
-                f"Expected sensor vector of shape ({N_SENSORS},), "
+                f"Expected sensor vector of shape ({n_sensor},), "
                 f"got {sensors.shape}"
             )
-
-        net = self._ensure_compiled()
 
         # Initialise state on first use or after topology change.
         if self.state is None or self.state.shape != (net.n_nodes,):
             self.state = np.zeros(net.n_nodes, dtype=np.float32)
 
-        # Sensors overwrite the first N_SENSORS positions every tick.
+        # Sensors overwrite the first n_sensor positions every tick.
         # This is the "perception" boundary: sensor values come from
         # the world, not from internal state.
-        self.state[:N_SENSORS] = sensors
+        self.state[:n_sensor] = sensors
 
         if net.in_idx.size > 0:
             # Iteratively refine non-sensor activations.
