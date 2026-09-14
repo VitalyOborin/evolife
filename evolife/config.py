@@ -44,20 +44,25 @@ FOOD_ENERGY: float = 40.0
 FB_TO_HIDDEN_WEIGHT: float = 1.0
 
 # Phase 3: signed reward magnitudes. Eating FoodA in season 0 gives +25; in
-# season 1 the *same* smell yields -10. Energy delta is what the organism
+# season 1 the *same* smell yields -3. Energy delta is what the organism
 # experiences — it cannot sense season directly, only via intake feedback.
+# The negative penalty is large enough to discourage random feeding but
+# small enough that founders can survive an early mistake. Phase 3.0 is
+# cold-start: founders have to learn a 7-sensor navigation reflex *and*
+# a season-dependent selection rule from scratch, so the net reward
+# over many random eats must stay positive.
 FOOD_A_POSITIVE_ENERGY: float = 25.0
-FOOD_A_NEGATIVE_ENERGY: float = -10.0
+FOOD_A_NEGATIVE_ENERGY: float = -3.0
 FOOD_B_POSITIVE_ENERGY: float = 25.0
-FOOD_B_NEGATIVE_ENERGY: float = -10.0
+FOOD_B_NEGATIVE_ENERGY: float = -3.0
 
 # Phase 3: how long a season lasts in ticks before flipping sign of rewards.
-SEASON_LENGTH: int = 3000
+SEASON_LENGTH: int = 2000
 
 # Phase 3: how many ticks after `eat` the intake_feedback signal remains
 # non-zero in the organism. 1 means it disappears next tick; 2 means it
 # lingers. Short window is closer to CANON "single-tick intake signal".
-INTAKE_FEEDBACK_DURATION: int = 1
+INTAKE_FEEDBACK_DURATION: int = 2
 
 # Energy passively drained per tick just for being alive.
 IDLE_ENERGY_COST: float = 0.02
@@ -81,6 +86,11 @@ INITIAL_POPULATION: int = 50
 # Energy a newborn organism starts with. Equal to FOOD_ENERGY so a fresh
 # organism has one meal of buffer against starvation.
 INITIAL_ENERGY: float = FOOD_ENERGY*2
+
+# Phase 3 founder buffer. Founders must survive several wrong eats while
+# learning the season/feedback structure. Used by MemoryEcologyWorld
+# instead of the global INITIAL_ENERGY.
+PHASE3_INITIAL_ENERGY: float = FOOD_ENERGY * 10
 
 # Energy threshold above which an organism reproduces. After one successful
 # meal a proto-organism should already be close to replication.

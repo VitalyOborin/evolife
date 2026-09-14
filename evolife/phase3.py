@@ -56,6 +56,7 @@ from .config import (
     MOVE_DEADZONE,
     MOVE_ENERGY_COST,
     NEURON_METABOLIC_COST,
+    PHASE3_INITIAL_ENERGY,
     POPULATION_CAP,
     REPRODUCTION_ENERGY,
     REPRODUCTION_THRESHOLD,
@@ -70,13 +71,18 @@ from .sensors import DualSmellField
 from .world import Food, World
 
 
-# Phase 3 sensor layout (must match brain.make_default_genome below):
-#   0..2 : FoodA smell left/front/right   (continuous in [0,1])
-#   3..5 : FoodB smell left/front/right   (continuous in [0,1])
-#   6    : intake_feedback                (in {-1, 0, +1})
-N_SMELL_CHANNELS = 6
-FEEDBACK_INDEX = 6
-N_SENSORS_PHASE3 = 7
+# Phase 3 sensor layout:
+#   0..2 : smell left/front/right (FoodA in season 0 is +reward, FoodB in
+#          season 1 is +reward; either resource is always available,
+#          reward sign flips with season)
+#   3    : intake_feedback (in {-1, 0, +1})
+# Smell channel is sum of FoodA + FoodB intensities. Phase 3.0 uses
+# the *same* smell probe as Phase 1.5 so that the cold-start founder
+# already knows how to navigate by smell. The 4th channel (feedback)
+# is the only addition.
+N_SMELL_CHANNELS = 3
+FEEDBACK_INDEX = 3
+N_SENSORS_PHASE3 = 4
 
 
 @dataclass
@@ -94,12 +100,14 @@ class FoodB(Food):
 def make_phase3_founder(rng: np.random.Generator) -> Genome:
     """Build a Phase 3 founder genome.
 
-    Topology:
-      6 smell sensors  -> 1 hidden  (tanh, bias 0)
+    Topology (mirrors the legacy Phase 1.5 founder plus one feedback edge):
+      3 smell sensors  -> 1 hidden  (tanh, bias 0)
       1 feedback sensor -> 1 hidden  (fixed weight FB_TO_HIDDEN_WEIGHT)
       1 hidden         -> 2 motors  (tanh)
 
-    Total: 9 connections.
+    Total: 6 connections. The first 5 mirror the legacy founder so the
+    cold-start genome already has a working smell-to-motor reflex;
+    only the feedback edge is new.
     """
     g = Genome()
     sensor_ids: list[int] = []
@@ -137,7 +145,7 @@ def make_phase3_founder(rng: np.random.Generator) -> Genome:
 
     sigma = INITIAL_WEIGHT_SIGMA
     innov = 0
-    # 6 smell sensors -> hidden
+    # 3 smell sensors -> hidden
     for src in sensor_ids[:N_SMELL_CHANNELS]:
         for h in hidden_ids:
             g.connections[innov] = ConnectionGene(
@@ -147,7 +155,7 @@ def make_phase3_founder(rng: np.random.Generator) -> Genome:
                 enabled=True,
             )
             innov += 1
-    # feedback sensor (sensor[6]) -> hidden, fixed weight
+    # feedback sensor (sensor[3]) -> hidden, fixed weight
     fb_id = sensor_ids[FEEDBACK_INDEX]
     for h in hidden_ids:
         g.connections[innov] = ConnectionGene(
@@ -239,7 +247,7 @@ class MemoryEcologyWorld(World):
             x=float(self.rng.uniform(0, self.width)),
             y=float(self.rng.uniform(0, self.height)),
             heading=float(self.rng.uniform(0, 2 * math.pi)),
-            energy=INITIAL_ENERGY,
+            energy=PHASE3_INITIAL_ENERGY,
             brain=Brain(genome),
             genome=genome,
         )
@@ -342,17 +350,26 @@ class MemoryEcologyWorld(World):
     # --- per-organism action -------------------------------------------------
 
     def _sensors_for(self, org: Organism) -> NDArray[np.float32]:
-        """6-vector smell (from dual field) + 1-element feedback channel.
+        """3-vector smell (FoodA + FoodB summed) + 1-element feedback.
 
         Order:
-          [a_left, a_front, a_right,
-           b_left, b_front, b_right,
-           intake_feedback]
+          [smell_left, smell_front, smell_right, intake_feedback]
+
+        Smell is the *total* smell from both resources so the cold-start
+        brain already has a working navigation reflex inherited from
+        Phase 1.5. The brain cannot tell which resource it smells; only
+        the post-eat feedback signal reveals it.
         """
-        smell6 = self.dual_smell.sample(org.x, org.y, org.heading, SMELL_HALF_ANGLE)
+        smell_a = self.dual_smell.field_a.sample(
+            org.x, org.y, org.heading, SMELL_HALF_ANGLE
+        )
+        smell_b = self.dual_smell.field_b.sample(
+            org.x, org.y, org.heading, SMELL_HALF_ANGLE
+        )
+        smell = np.minimum(smell_a + smell_b, 1.0)  # clip at 1, not 2
         fb = float(org.intake_feedback) if org.intake_feedback_ttl > 0 else 0.0
         arr = np.empty(N_SENSORS_PHASE3, dtype=np.float32)
-        arr[:N_SMELL_CHANNELS] = smell6
+        arr[:N_SMELL_CHANNELS] = smell
         arr[FEEDBACK_INDEX] = fb
         return arr
 
