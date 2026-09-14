@@ -46,8 +46,13 @@ def main() -> None:
                 metrics.record_organisms(world, world.organisms)
                 metrics.record_species(world)
                 metrics.record_behavior(world, world.organisms)
+                # Persist any archive milestones that fired this tick.
+                # This survives timeout / crash because each call only
+                # inserts new milestones past the high-water mark.
+                metrics.record_archive_milestones(world.archive)
             metrics.flush_events(world.events)
             metrics.flush_species_events(world.species_manager)
+            metrics.record_archive_milestones(world.archive)
         finally:
             elapsed = time.perf_counter() - t0
             ran = max(world.tick, 1)

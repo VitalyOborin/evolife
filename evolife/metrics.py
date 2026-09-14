@@ -116,6 +116,15 @@ CREATE TABLE IF NOT EXISTS species_events (
     representative_genome_hash   TEXT
 );
 CREATE INDEX IF NOT EXISTS species_events_tick_idx ON species_events(tick);
+
+CREATE TABLE IF NOT EXISTS archive_milestones (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick         INTEGER NOT NULL,
+    kind         TEXT    NOT NULL,
+    payload_json  TEXT
+);
+CREATE INDEX IF NOT EXISTS archive_milestones_kind_idx ON archive_milestones(kind);
+CREATE INDEX IF NOT EXISTS archive_milestones_tick_idx ON archive_milestones(tick);
 """
 
 
@@ -353,6 +362,35 @@ class Metrics:
         )
         self._conn.commit()
         self._species_event_offset = len(manager.events)
+
+    def record_archive_milestones(self, archive) -> int:
+        """Persist any new Archive milestones to the archive_milestones
+        table. Returns the number of rows written on this call.
+
+        Each call records only milestones after the high-water mark so
+        callers can invoke it every N ticks without re-inserting the
+        same milestones.
+        """
+        import json as _json
+
+        if not hasattr(self, "_archive_milestone_offset"):
+            self._archive_milestone_offset = 0
+        new = archive.milestones[self._archive_milestone_offset :]
+        if not new:
+            return 0
+        rows = []
+        for m in new:
+            rows.append(
+                (m.tick, m.kind.name, _json.dumps(m.payload, default=str))
+            )
+        self._conn.executemany(
+            "INSERT INTO archive_milestones (tick, kind, payload_json) "
+            "VALUES (?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+        self._archive_milestone_offset = len(archive.milestones)
+        return len(rows)
 
 
 def _locomotion_bias_over_weights(genome: Genome) -> float:
