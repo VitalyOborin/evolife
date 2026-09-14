@@ -50,6 +50,13 @@ class Organism:
     _moving: bool | None = None
     _bout_len: int = 0
 
+    # Phase 3: short-lived reward signal injected into hidden state after eat.
+    # Reset each tick via world._tick_intake_feedback(); set to +1 or -1 by
+    # _resolve_eat() when the organism consumes food.
+    intake_feedback: float = 0.0
+    intake_feedback_ttl: int = 0  # ticks remaining before it decays to 0
+    last_intake_feedback: float = 0.0  # most recent non-zero value (for stats)
+
     def note_locomotion(self, speed: float) -> None:
         """Record one tick of rest or movement for behavioral metrics."""
         moving = speed > 0.0

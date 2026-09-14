@@ -15,8 +15,19 @@ from dataclasses import dataclass
 WORLD_WIDTH: int = 512
 WORLD_HEIGHT: int = 512
 
-# How many food particles the world tries to maintain.
+# --- Phase 3: world resource mode ---
+# "single" = legacy Phase 1.5 world (one resource, uniform smell, FOOD_ENERGY).
+# "two_resources" = two distinct food types (FoodA / FoodB) with season-dependent
+#                   reward sign, designed to make feedforward reflex insufficient.
+WORLD_RESOURCE_MODE: str = "two_resources"
+
+# Total food particles across both resources when mode = "two_resources".
+# (Equivalent to FOOD_TARGET in single mode.)
 FOOD_TARGET: int = 200
+
+# How many of the FOOD_TARGET go to FoodA vs FoodB on initial spawn / respawn.
+# Roughly balanced so a founder does not see one resource disproportionately.
+FOOD_A_FRACTION: float = 0.5
 
 # Per-tick binomial probability that each missing food particle respawns.
 # Expected new food = (FOOD_TARGET - current) * FOOD_REGROWTH_RATE.
@@ -25,6 +36,22 @@ FOOD_REGROWTH_RATE: float = 0.002
 
 # Energy gained from eating one food particle.
 FOOD_ENERGY: float = 40.0
+
+# Phase 3: signed reward magnitudes. Eating FoodA in season 0 gives +25; in
+# season 1 the *same* smell yields -10. Energy delta is what the organism
+# experiences — it cannot sense season directly, only via intake feedback.
+FOOD_A_POSITIVE_ENERGY: float = 25.0
+FOOD_A_NEGATIVE_ENERGY: float = -10.0
+FOOD_B_POSITIVE_ENERGY: float = 25.0
+FOOD_B_NEGATIVE_ENERGY: float = -10.0
+
+# Phase 3: how long a season lasts in ticks before flipping sign of rewards.
+SEASON_LENGTH: int = 3000
+
+# Phase 3: how many ticks after `eat` the intake_feedback signal remains
+# non-zero in the organism. 1 means it disappears next tick; 2 means it
+# lingers. Short window is closer to CANON "single-tick intake signal".
+INTAKE_FEEDBACK_DURATION: int = 1
 
 # Energy passively drained per tick just for being alive.
 IDLE_ENERGY_COST: float = 0.02
@@ -70,12 +97,15 @@ MAX_AGE: int = 50_000
 
 # --- Brain -----------------------------------------------------------------
 
-# Sensor layout for v2.2 proto-brain (local smell only):
-# Index 0: smell_left  in [0, 1] — smell at probe ahead-left.
-# Index 1: smell_front in [0, 1] — smell at probe directly ahead.
-# Index 2: smell_right in [0, 1] — smell at probe ahead-right.
-# Energy and a constant bias sensor are deliberately omitted: NodeGene
-# already has a real bias, and eat/reproduce are automatic.
+# Phase 3 sensor layout: 3 directions (left, front, right) x 2 resources
+# (FoodA, FoodB). Order:
+# Index 0: a_left  Index 1: a_front  Index 2: a_right
+# Index 3: b_left  Index 4: b_front  Index 5: b_right
+# Each value in [0, 1] (max smell strength normalised).
+# The intake_feedback channel in MemoryEcologyWorld is the 7th sensor,
+# set by that subclass's _sensors_for. There is no plain "Phase 3
+# sensors" sensor here: legacy world still has 3 (Phase 1.5), and the
+# MemoryEcologyWorld subclass overrides everything.
 N_SENSORS: int = 3
 
 # Motor outputs (both tanh, zero-centered):

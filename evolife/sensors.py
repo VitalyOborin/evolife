@@ -87,31 +87,70 @@ class SmellField:
 
         Returns float32 array of shape (3,) with each value in [0, 1].
         """
-        # Distance ahead of the organism at which we sample smell.
-        # Must be <= SMELL_FIELD_RADIUS.
-        PROBE_DISTANCE = 8.0
-        cos_thresh = math.cos(half_angle)
+        return _sample_three(self.grid, x, y, heading, half_angle, self.width, self.height)
 
-        def probe(angle_offset: float) -> float:
-            ang = heading + angle_offset
-            sx = (x + PROBE_DISTANCE * math.cos(ang)) % self.width
-            sy = (y + PROBE_DISTANCE * math.sin(ang)) % self.height
-            v = float(self.grid[int(sy) % self.height, int(sx) % self.width])
-            return v
 
-        left_v = probe(-half_angle)
-        front_v = probe(0.0)
-        right_v = probe(+half_angle)
-        # Soft saturation: 1 - exp(-k*v). With k=3, v=0.3 -> 0.59,
-        # v=1.0 -> 0.95, v=10 -> 1.0 (asymptote). This prevents total
-        # saturation in dense food regions while keeping low values
-        # informative.
-        k = 3.0
-        return np.array(
-            [
-                1.0 - math.exp(-k * left_v),
-                1.0 - math.exp(-k * front_v),
-                1.0 - math.exp(-k * right_v),
-            ],
-            dtype=np.float32,
-        )
+def _sample_three(
+    grid: np.ndarray,
+    x: float,
+    y: float,
+    heading: float,
+    half_angle: float,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Three-probe sample with soft saturation, used by both single and
+    dual smell fields. Returns float32 array of shape (3,) in [0, 1].
+    """
+    PROBE_DISTANCE = 8.0
+    k = 3.0
+
+    def probe(angle_offset: float) -> float:
+        ang = heading + angle_offset
+        sx = (x + PROBE_DISTANCE * math.cos(ang)) % width
+        sy = (y + PROBE_DISTANCE * math.sin(ang)) % height
+        v = float(grid[int(sy) % height, int(sx) % width])
+        return 1.0 - math.exp(-k * v)
+
+    return np.array(
+        [
+            probe(-half_angle),
+            probe(0.0),
+            probe(+half_angle),
+        ],
+        dtype=np.float32,
+    )
+
+
+class DualSmellField:
+    """Two independent SmellField instances, one per resource.
+
+    Phase 3 uses this to give the brain distinguishable smell for FoodA
+    and FoodB without changing sensor mechanics. Each field is recomputed
+    independently from its own food list. `sample` returns a 6-vector:
+    [a_left, a_front, a_right, b_left, b_front, b_right].
+    """
+
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        radius: int = SMELL_FIELD_RADIUS,
+    ) -> None:
+        self.width = width
+        self.height = height
+        self.field_a = SmellField(width, height, radius)
+        self.field_b = SmellField(width, height, radius)
+
+    def recompute_split(self, food_a: list, food_b: list) -> None:
+        """Recompute both fields from their respective food lists."""
+        self.field_a.recompute(food_a)
+        self.field_b.recompute(food_b)
+
+    def sample(
+        self, x: float, y: float, heading: float, half_angle: float
+    ) -> np.ndarray:
+        """Sample both fields and concatenate the (3,) results into (6,)."""
+        a = self.field_a.sample(x, y, heading, half_angle)
+        b = self.field_b.sample(x, y, heading, half_angle)
+        return np.concatenate([a, b]).astype(np.float32)
