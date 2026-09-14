@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from evolife.brain import Brain, _ITERATIONS
-from evolife.config import N_MOTORS, N_SENSORS
+from evolife.config import N_MOTORS, N_SENSORS, locomotion_speed
 from evolife.genome import Activation, ConnectionGene, NodeGene, NodeType
 
 
@@ -34,6 +34,40 @@ def test_zero_locomotion_bias_rests_without_smell():
     g.motors()[1].bias = 0.0
     out = Brain(g).forward(np.zeros(N_SENSORS, dtype=np.float32))
     assert abs(float(out[1])) < 0.05
+
+
+def _set_sensor_to_locomotion_weights(g, weight: float) -> None:
+    loc_id = g.motors()[1].id
+    sensor_ids = {n.id for n in g.sensors()}
+    for c in g.connections.values():
+        if c.in_node in sensor_ids and c.out_node == loc_id:
+            c.weight = weight
+
+
+def test_smell_can_stop_a_weak_roamer():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    g.motors()[0].bias = 0.0
+    g.motors()[1].bias = 0.08
+    _set_sensor_to_locomotion_weights(g, -0.20)
+    brain = Brain(g)
+    none = np.zeros(N_SENSORS, dtype=np.float32)
+    full = np.ones(N_SENSORS, dtype=np.float32)
+    assert locomotion_speed(float(brain.forward(none)[1])) > 0.0
+    brain.reset_state()
+    assert locomotion_speed(float(brain.forward(full)[1])) == 0.0
+
+
+def test_smell_can_start_a_weak_sitter():
+    g = Brain.make_default_genome(rng=np.random.default_rng(0))
+    g.motors()[0].bias = 0.0
+    g.motors()[1].bias = -0.07
+    _set_sensor_to_locomotion_weights(g, 0.20)
+    brain = Brain(g)
+    none = np.zeros(N_SENSORS, dtype=np.float32)
+    full = np.ones(N_SENSORS, dtype=np.float32)
+    assert locomotion_speed(float(brain.forward(none)[1])) == 0.0
+    brain.reset_state()
+    assert locomotion_speed(float(brain.forward(full)[1])) > 0.0
 
 
 def test_brain_rejects_wrong_sensor_shape():

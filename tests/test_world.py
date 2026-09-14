@@ -250,6 +250,22 @@ def test_founders_mix_rest_and_roam_with_no_smell():
     assert 0.20 < frac < 0.80
 
 
+def test_rest_move_transition_is_counted():
+    w = World(seed=1)
+    org = w.organisms[0]
+    org.brain = _FixedBrain(turn=0.0, locomotion=0.0)
+    w._act(org)
+    assert org.movement_transitions == 0
+    assert org.longest_rest >= 1
+    org.brain = _FixedBrain(turn=0.0, locomotion=1.0)
+    w._act(org)
+    assert org.movement_transitions == 1
+    assert org.ticks_moving == 1
+    org.brain = _FixedBrain(turn=0.0, locomotion=0.0)
+    w._act(org)
+    assert org.movement_transitions == 2
+
+
 class _FixedBrain:
     def __init__(self, turn: float, locomotion: float) -> None:
         self._out = np.array([turn, locomotion], dtype=np.float32)

@@ -148,10 +148,9 @@ class Brain:
         """Construct a proto-brain: sensors wired straight to motors.
 
         Default v2.2 topology is 3 smell sensors, 0 hidden, 2 motors,
-        6 connections. Weights are tiny. Turn bias is 0; locomotion
-        bias is sampled N(0, INITIAL_LOCOMOTION_BIAS_SIGMA) so the
-        founding population mixes sitters and roamers. Sensory input
-        then modulates that basal drive.
+        6 connections. Locomotion bias is a weak prior
+        N(0, INITIAL_LOCOMOTION_BIAS_SIGMA); sensory weights are larger
+        so smell can flip rest ↔ move. Turn bias stays 0.
 
         Hidden neurons and recurrent edges are not gifted; they can
         appear later via structural mutation.

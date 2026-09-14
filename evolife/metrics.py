@@ -13,6 +13,7 @@ from typing import Iterable
 from .config import METRICS_DB_PATH, METRICS_ORGANISM_EVERY, METRICS_WORLD_EVERY
 from .organism import Organism
 from .world import World
+from .genome import Genome
 
 
 _SCHEMA = """
@@ -36,6 +37,12 @@ CREATE TABLE IF NOT EXISTS organism_snapshots (
     generation   INTEGER NOT NULL,
     founder_lineage_id INTEGER NOT NULL,
     food_eaten   INTEGER NOT NULL,
+    movement_transitions INTEGER NOT NULL,
+    ticks_moving INTEGER NOT NULL,
+    speed_sum    REAL    NOT NULL,
+    longest_rest INTEGER NOT NULL,
+    longest_move INTEGER NOT NULL,
+    bias_over_weights REAL NOT NULL,
     alive        INTEGER NOT NULL,
     PRIMARY KEY (tick, organism_id)
 );
@@ -77,6 +84,12 @@ class Metrics:
             ("generation", "INTEGER NOT NULL DEFAULT 0"),
             ("founder_lineage_id", "INTEGER NOT NULL DEFAULT 0"),
             ("food_eaten", "INTEGER NOT NULL DEFAULT 0"),
+            ("movement_transitions", "INTEGER NOT NULL DEFAULT 0"),
+            ("ticks_moving", "INTEGER NOT NULL DEFAULT 0"),
+            ("speed_sum", "REAL NOT NULL DEFAULT 0"),
+            ("longest_rest", "INTEGER NOT NULL DEFAULT 0"),
+            ("longest_move", "INTEGER NOT NULL DEFAULT 0"),
+            ("bias_over_weights", "REAL NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self._conn.execute(
@@ -122,6 +135,12 @@ class Metrics:
                     o.generation,
                     o.founder_lineage_id,
                     o.food_eaten,
+                    o.movement_transitions,
+                    o.ticks_moving,
+                    o.speed_sum,
+                    o.longest_rest,
+                    o.longest_move,
+                    _locomotion_bias_over_weights(o.genome),
                     int(o.alive),
                 )
             )
@@ -129,8 +148,10 @@ class Metrics:
             "INSERT OR REPLACE INTO organism_snapshots ("
             "tick, organism_id, parent_id, age, energy, peak_energy, "
             "children, genome_nodes, genome_conns, generation, "
-            "founder_lineage_id, food_eaten, alive"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "founder_lineage_id, food_eaten, movement_transitions, "
+            "ticks_moving, speed_sum, longest_rest, longest_move, "
+            "bias_over_weights, alive"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self._conn.commit()
@@ -161,3 +182,23 @@ class Metrics:
             rows,
         )
         self._conn.commit()
+
+
+def _locomotion_bias_over_weights(genome: Genome) -> float:
+    """|locomotion_bias| / sum(|weights into locomotion motor|).
+
+    Values >> 1 mean the gait is a locked genetic type; values ~1 mean
+    smell can still flip rest ↔ move.
+    """
+    motors = genome.motors()
+    if len(motors) < 2:
+        return 0.0
+    loc = motors[1]
+    wsum = sum(
+        abs(c.weight)
+        for c in genome.active_connections()
+        if c.out_node == loc.id
+    )
+    if wsum < 1e-9:
+        return abs(loc.bias) * 1e9
+    return abs(loc.bias) / wsum

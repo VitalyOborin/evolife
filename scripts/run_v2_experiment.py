@@ -75,7 +75,8 @@ def main() -> None:
                 f"maxGen={max_gen:>3}  lin={world.n_lineages():>3}  "
                 f"meanE={world.mean_energy():>6.1f}  "
                 f"births={n_births:>5}  deaths={n_deaths:>5}  "
-                f"eats={n_eats:>5}  reproductions={n_repros:>5}",
+                f"eats={n_eats:>5}  reproductions={n_repros:>5}  "
+                f"medTrans={world.median_movement_transitions():>5.1f}",
                 flush=True,
             )
             metrics.close()

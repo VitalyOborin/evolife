@@ -89,13 +89,13 @@ N_MOTORS: int = 2
 # recurrence) can appear later via structural mutation.
 N_HIDDEN: int = 0
 
-# Std of initial connection weights. Small enough that sensory
-# modulation starts weak; basal locomotion comes from motor bias.
-INITIAL_WEIGHT_SIGMA: float = 0.05
+# Std of initial connection weights. Strong enough that smell can
+# override the weak locomotion prior and flip rest ↔ move.
+INITIAL_WEIGHT_SIGMA: float = 0.20
 
-# Founder locomotion bias ~ N(0, this). Turn bias stays 0 so founders
-# do not spin. Half the population tends to rest, half to roam.
-INITIAL_LOCOMOTION_BIAS_SIGMA: float = 0.35
+# Founder locomotion bias ~ N(0, this). A weak prior, not a locked
+# gait: turn bias stays 0 so founders do not spin.
+INITIAL_LOCOMOTION_BIAS_SIGMA: float = 0.10
 
 MAX_LINEAR_SPEED: float = 2.0
 MAX_TURN_RATE: float = 0.3
@@ -151,7 +151,7 @@ WEIGHT_MAX: float = 5.0
 BIAS_MUTATION_RATE: float = 0.2
 BIAS_PERTURB_SIGMA: float = 0.05
 BIAS_REPLACE_RATE: float = 0.01
-BIAS_REPLACE_SIGMA: float = 0.5
+BIAS_REPLACE_SIGMA: float = 0.20
 BIAS_MAX: float = 2.0
 
 # Per-birth probability of structural mutations. Kept rare until a

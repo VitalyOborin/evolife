@@ -219,6 +219,7 @@ class World:
         org.heading = (org.heading + turn) % (2 * np.pi)
         org.x = (org.x + np.cos(org.heading) * move) % self.width
         org.y = (org.y + np.sin(org.heading) * move) % self.height
+        org.note_locomotion(move)
 
         # Automatic contact eating: any food within EAT_RADIUS is eaten.
         # No motor required.
@@ -443,3 +444,9 @@ class World:
         return len(
             {o.founder_lineage_id for o in self.organisms if o.alive}
         )
+
+    def median_movement_transitions(self) -> float:
+        alive = [o.movement_transitions for o in self.organisms if o.alive]
+        if not alive:
+            return 0.0
+        return float(np.median(alive))
