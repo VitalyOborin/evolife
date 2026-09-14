@@ -505,10 +505,17 @@ class MemoryEcologyWorld(World):
         In static_dual mode both food types are always positive: there
         is no season and no resource to avoid. Only in visible_season
         and hidden_season does the sign of the reward flip with season.
+
+        One organism can eat at most one particle per tick, even
+        when both food_a and food_b are within EAT_RADIUS. This keeps
+        energy budgets comparable to Phase 1.5.
         """
         for org in self.organisms:
             if not org.alive:
                 continue
+            # Pick the single nearest particle across both resources.
+            best_dist = float("inf")
+            best_target: tuple | None = None
             for food_list, is_a in ((self.food_a, True), (self.food_b, False)):
                 if not food_list:
                     continue
@@ -520,42 +527,48 @@ class MemoryEcologyWorld(World):
                 dy -= self.height * np.round(dy / self.height)
                 dist = np.hypot(dx, dy)
                 idx = int(np.argmin(dist))
-                if float(dist[idx]) <= EAT_RADIUS:
-                    eaten = food_list.pop(idx)
-                    if not self.season_enabled:
-                        # static_dual: both resources are always +25.
-                        reward = (
-                            FOOD_A_POSITIVE_ENERGY
-                            if is_a
-                            else FOOD_B_POSITIVE_ENERGY
-                        )
-                    elif is_a:
-                        reward = (
-                            FOOD_A_POSITIVE_ENERGY
-                            if self.season == 0
-                            else FOOD_A_NEGATIVE_ENERGY
-                        )
-                    else:
-                        reward = (
-                            FOOD_B_POSITIVE_ENERGY
-                            if self.season == 1
-                            else FOOD_B_NEGATIVE_ENERGY
-                        )
-                    org.energy += reward
-                    org.food_eaten += 1
-                    if org.time_to_first_food is None:
-                        org.time_to_first_food = org.age
-                    if reward > 0:
-                        org.intake_feedback = +1.0
-                    else:
-                        org.intake_feedback = -1.0
-                    org.intake_feedback_ttl = INTAKE_FEEDBACK_DURATION
-                    org.last_intake_feedback = org.intake_feedback
-                    if reward > 0:
-                        org.positive_eats = getattr(org, "positive_eats", 0) + 1
-                    else:
-                        org.negative_eats = getattr(org, "negative_eats", 0) + 1
-                    self.events.record_eat(
-                        self.tick, org_id=org.id,
-                        x=eaten.x, y=eaten.y,
-                    )
+                d = float(dist[idx])
+                if d <= EAT_RADIUS and d < best_dist:
+                    best_dist = d
+                    best_target = (food_list, is_a, idx)
+            if best_target is None:
+                continue
+            food_list, is_a, idx = best_target
+            eaten = food_list.pop(idx)
+            if not self.season_enabled:
+                # static_dual: both resources are always +FOOD_*_POSITIVE_ENERGY.
+                reward = (
+                    FOOD_A_POSITIVE_ENERGY
+                    if is_a
+                    else FOOD_B_POSITIVE_ENERGY
+                )
+            elif is_a:
+                reward = (
+                    FOOD_A_POSITIVE_ENERGY
+                    if self.season == 0
+                    else FOOD_A_NEGATIVE_ENERGY
+                )
+            else:
+                reward = (
+                    FOOD_B_POSITIVE_ENERGY
+                    if self.season == 1
+                    else FOOD_B_NEGATIVE_ENERGY
+                )
+            org.energy += reward
+            org.food_eaten += 1
+            if org.time_to_first_food is None:
+                org.time_to_first_food = org.age
+            if reward > 0:
+                org.intake_feedback = +1.0
+            else:
+                org.intake_feedback = -1.0
+            org.intake_feedback_ttl = INTAKE_FEEDBACK_DURATION
+            org.last_intake_feedback = org.intake_feedback
+            if reward > 0:
+                org.positive_eats = getattr(org, "positive_eats", 0) + 1
+            else:
+                org.negative_eats = getattr(org, "negative_eats", 0) + 1
+            self.events.record_eat(
+                self.tick, org_id=org.id,
+                x=eaten.x, y=eaten.y,
+            )
