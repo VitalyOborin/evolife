@@ -46,6 +46,9 @@ from numpy.typing import NDArray
 from .brain import Brain
 from .config import (
     BIAS_MAX,
+    CHILD_DISPERSAL_MAX,
+    CHILD_DISPERSAL_MIN,
+    CHILD_HEADING_NOISE,
     CONNECTION_METABOLIC_COST,
     EAT_RADIUS,
     FB_TO_HIDDEN_WEIGHT,
@@ -64,7 +67,11 @@ from .config import (
     MAX_AGE,
     MOVE_DEADZONE,
     NEURON_METABOLIC_COST,
+    PHASE3_FOOD_A_NEGATIVE_ENERGY,
+    PHASE3_FOOD_B_NEGATIVE_ENERGY,
+    PHASE3_FOOD_TARGET,
     PHASE3_INITIAL_ENERGY,
+    PHASE3_REPRODUCTION_THRESHOLD,
     POPULATION_CAP,
     REPRODUCTION_ENERGY,
     REPRODUCTION_THRESHOLD,
@@ -340,17 +347,85 @@ class MemoryEcologyWorld(World):
         # Season state.
         self.season: int = 0
         self.ticks_in_season: int = 0
+        # Phase 3 reproduction threshold (separate from the global one
+        # used by the legacy World).
+        self._reproduction_threshold = PHASE3_REPRODUCTION_THRESHOLD
         # Spawn founders + initial food.
         self._populate_initial()
 
+    def _reproduce(self) -> None:
+        """Phase 3 reproduction: same logic as World._reproduce, but
+        uses PHASE3_REPRODUCTION_THRESHOLD so the founder's first wave
+        doesn't overshoot the food budget.
+        """
+        if len(self.organisms) >= POPULATION_CAP:
+            return
+        new_organisms: list[Organism] = []
+        for org in self.organisms:
+            if not org.alive:
+                continue
+            if org.energy < self._reproduction_threshold:
+                continue
+            if len(self.organisms) + len(new_organisms) >= POPULATION_CAP:
+                break
+
+            assert org.genome is not None
+            child_genome = self._mutate(org.genome)
+
+            org.energy -= REPRODUCTION_ENERGY
+            child_id = self._next_organism_id()
+            child_heading = float(
+                (org.heading + self.rng.normal(0.0, CHILD_HEADING_NOISE))
+                % (2 * np.pi)
+            )
+            distance = float(
+                self.rng.uniform(CHILD_DISPERSAL_MIN, CHILD_DISPERSAL_MAX)
+            )
+            child_x = (org.x + math.cos(child_heading) * distance) % self.width
+            child_y = (org.y + math.sin(child_heading) * distance) % self.height
+            child = Organism(
+                id=child_id,
+                x=child_x,
+                y=child_y,
+                heading=child_heading,
+                energy=REPRODUCTION_ENERGY,
+                brain=Brain(child_genome),
+                genome=child_genome,
+                parent_id=org.id,
+                generation=org.generation + 1,
+                founder_lineage_id=org.founder_lineage_id,
+            )
+            child.species_id = self.species_manager.assign(
+                child_genome,
+                self.tick,
+                child_id,
+                parent_species_id=org.species_id,
+            )
+            new_organisms.append(child)
+            org.children += 1
+            self.events.record_reproduction(
+                self.tick,
+                parent_id=org.id,
+                child_id=child_id,
+                child_genome_hash=child_genome.fingerprint(),
+            )
+            self._check_milestones(child_genome, child_id, parent_genome=org.genome, parent_id=org.id)
+        self.organisms.extend(new_organisms)
+
     def _populate_initial(self) -> None:
-        """Phase 3 founder population + dual-resource food spawn."""
+        """Phase 3 founder population + dual-resource food spawn.
+
+        Uses Phase 3 specific demographic constants: PHASE3_FOOD_TARGET
+        (more food than Phase 1.5 so the founder population survives
+        its blind-eats while waiting for evolution to grow recurrence),
+        and the standard INITIAL_POPULATION.
+        """
         for _ in range(INITIAL_POPULATION):
             self._spawn_founder()
         self.species_manager.sync(self.organisms, self.tick)
 
-        n_a = int(FOOD_TARGET * FOOD_A_FRACTION)
-        n_b = FOOD_TARGET - n_a
+        n_a = int(PHASE3_FOOD_TARGET * FOOD_A_FRACTION)
+        n_b = PHASE3_FOOD_TARGET - n_a
         for _ in range(n_a):
             self._spawn_food_a()
         for _ in range(n_b):
@@ -410,8 +485,8 @@ class MemoryEcologyWorld(World):
             self.ticks_in_season += 1
 
         # 1. Regrow food per resource.
-        a_target = int(FOOD_TARGET * FOOD_A_FRACTION)
-        b_target = FOOD_TARGET - a_target
+        a_target = int(PHASE3_FOOD_TARGET * FOOD_A_FRACTION)
+        b_target = PHASE3_FOOD_TARGET - a_target
         missing_a = max(0, a_target - len(self.food_a))
         missing_b = max(0, b_target - len(self.food_b))
         if missing_a > 0:
@@ -546,13 +621,13 @@ class MemoryEcologyWorld(World):
                 reward = (
                     FOOD_A_POSITIVE_ENERGY
                     if self.season == 0
-                    else FOOD_A_NEGATIVE_ENERGY
+                    else PHASE3_FOOD_A_NEGATIVE_ENERGY
                 )
             else:
                 reward = (
                     FOOD_B_POSITIVE_ENERGY
                     if self.season == 1
-                    else FOOD_B_NEGATIVE_ENERGY
+                    else PHASE3_FOOD_B_NEGATIVE_ENERGY
                 )
             org.energy += reward
             org.food_eaten += 1

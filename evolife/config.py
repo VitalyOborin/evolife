@@ -102,7 +102,23 @@ INITIAL_ENERGY: float = FOOD_ENERGY*2
 # Phase 3 founder buffer. Founders must survive several wrong eats while
 # learning the season/feedback structure. Used by MemoryEcologyWorld
 # instead of the global INITIAL_ENERGY.
-PHASE3_INITIAL_ENERGY: float = FOOD_ENERGY * 10
+PHASE3_INITIAL_ENERGY: float = FOOD_ENERGY * 2  # matched to Phase 1.5
+
+# Phase 3 reproduction threshold: raise above the Phase 1.5 default so the
+# initial over-reproduction wave doesn't overshoot the food budget.
+PHASE3_REPRODUCTION_THRESHOLD: float = 128.0
+
+# Phase 3 food density: total A + B particles maintained on the grid.
+# Doubled from Phase 1.5's FOOD_TARGET so a founder population at ~50%
+# net reward rate still has food headroom.
+PHASE3_FOOD_TARGET: int = 400
+
+# Phase 3 reward magnitudes. +POSITIVE_ENERGY is unchanged from Phase 1.5.
+# -NEGATIVE_ENERGY magnitudes the cost of being wrong about the season.
+# 0 makes the founder blind to season flip (degenerates to static_dual);
+# higher values make the founder starve faster.
+PHASE3_FOOD_A_NEGATIVE_ENERGY: float = -3.0
+PHASE3_FOOD_B_NEGATIVE_ENERGY: float = -3.0
 
 # Energy threshold above which an organism reproduces. After one successful
 # meal a proto-organism should already be close to replication.
