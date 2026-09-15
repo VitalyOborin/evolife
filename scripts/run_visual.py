@@ -13,8 +13,8 @@ Warm-start founder is supported for MemoryEcologyWorld via
 --warm-json (a Phase 1.5 genome JSON). The brain keeps navigating
 and evolution can then specialise A vs B.
 
-`--device` is `cpu` only for Phase 3 modes (GpuWorld has no
-MemoryEcology counterpart yet).
+`--device cuda` (default) runs classic mode on GpuWorld. Phase 3 still
+steps on CPU; the smell heatmap uses CUDA when a GPU is present.
 """
 
 from __future__ import annotations
@@ -40,21 +40,72 @@ def main() -> None:
     parser.add_argument(
         "--warm-json", type=str, default=None,
         help="Path to a Phase 1.5 genome JSON for warm-start "
-        "(MemoryEcologyWorld modes only).",
+        "(MemoryEcologyWorld modes only). WITHOUT this the founder is "
+        "cold-start and likely goes extinct within 1000 ticks.",
     )
     parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
-        default="cpu",
-        help="cpu = World + Visualizer (full species colouring). "
-        "cuda = GpuWorld + GpuVisualizer (lineage colouring, no inspector). "
-        "MemoryEcologyWorld modes force cpu.",
+        default="cuda",
+        help="cuda = GpuWorld when mode=classic (falls back to cpu if "
+        "CUDA is missing). Smell colormap uses CUDA whenever torch "
+        "sees a GPU, including Phase 3 CPU worlds. "
+        "MemoryEcologyWorld simulation itself is still CPU.",
+    )
+    parser.add_argument(
+        "--plasticity-alpha", type=float, default=None,
+        help="Phase 4 per-tick local Hebbian rate. If None, no Phase 4 "
+        "plasticity. Use 0.01 to match run_phase4.py.",
+    )
+    parser.add_argument(
+        "--plasticity-beta", type=float, default=None,
+        help="Phase 4 per-tick reward-modulated rate. If None, no Phase 4 "
+        "plasticity. Use 0.05 to match run_phase4.py.",
+    )
+    parser.add_argument(
+        "--plasticity-trace", action="store_true",
+        help="Enable Phase 4.1 eligibility-trace rHebb (Miconi 2017). "
+        "Overrides --plasticity-alpha/beta when set.",
+    )
+    parser.add_argument(
+        "--plasticity-rate", type=float, default=0.005,
+        help="Phase 4.1 per-episode commit rate (default 0.005).",
     )
     args = parser.parse_args()
 
-    if args.mode != "classic" and args.device == "cuda":
-        print("MemoryEcologyWorld has no GPU backend yet; forcing --device cpu")
-        args.device = "cpu"
+    if args.device == "cuda":
+        try:
+            import torch
+            cuda_ok = torch.cuda.is_available()
+        except ImportError:
+            cuda_ok = False
+        if not cuda_ok:
+            print("CUDA unavailable; falling back to --device cpu")
+            args.device = "cpu"
+        elif args.mode != "classic":
+            print(
+                "MemoryEcologyWorld has no GPU step yet; "
+                "simulating on CPU, colourizing smell on CUDA"
+            )
+
+    from evolife.viz_lab import LabVisualizer
+
+    # Configure brain plasticity BEFORE any Brain is constructed.
+    # Phase 4.1 (eligibility-trace rHebb) takes precedence over Phase 4.
+    import evolife.brain as br
+    if args.plasticity_trace:
+        br.PLASTICITY_TRACE = True
+        br.PLASTICITY_RATE = args.plasticity_rate
+        print(
+            f"Phase 4.1 plasticity ON (trace=True eta={args.plasticity_rate})"
+        )
+    elif args.plasticity_alpha is not None or args.plasticity_beta is not None:
+        br.PLASTICITY_ALPHA = args.plasticity_alpha or 0.0
+        br.PLASTICITY_BETA = args.plasticity_beta or 0.0
+        print(
+            f"Phase 4 plasticity ON (alpha={br.PLASTICITY_ALPHA} "
+            f"beta={br.PLASTICITY_BETA})"
+        )
 
     warm_genome = None
     if args.warm_json:
@@ -76,22 +127,19 @@ def main() -> None:
                     "is False"
                 )
             from evolife.gpu_metrics import GpuMetrics
-            from evolife.gpu_visualization import GpuVisualizer
             from evolife.gpu_world import GpuWorld
             world = GpuWorld(seed=args.seed, device=torch.device("cuda"))
-            viz = GpuVisualizer(world)
+            viz = LabVisualizer(world)
             metrics = GpuMetrics()
         else:
             from evolife.metrics import Metrics
-            from evolife.visualization import Visualizer
             from evolife.world import World
             world = World(seed=args.seed)
-            viz = Visualizer(world)
+            viz = LabVisualizer(world)
             metrics = Metrics()
     else:
         from evolife.metrics import Metrics
         from evolife.phase3 import MemoryEcologyWorld
-        from evolife.phase3_visualization import Phase3Visualizer
         visible_sensor = (args.mode == "visible_season")
         world = MemoryEcologyWorld(
             seed=args.seed,
@@ -99,7 +147,7 @@ def main() -> None:
             visible_season_sensor=visible_sensor,
             warm_genome=warm_genome,
         )
-        viz = Phase3Visualizer(world)
+        viz = LabVisualizer(world)
         metrics = Metrics()
 
     try:
