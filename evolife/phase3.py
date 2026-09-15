@@ -162,6 +162,7 @@ def make_phase3_founder_from_warmstart(
     rng: np.random.Generator,
     warm_genome: Genome | None = None,
     visible_season_sensor: bool = False,
+    colony_marker_sensor: bool = False,
 ) -> Genome:
     """Build a Phase 3 founder.
 
@@ -176,11 +177,17 @@ def make_phase3_founder_from_warmstart(
     all weights drawn from INITIAL_WEIGHT_SIGMA. This is the cold
     start; it will likely go extinct, which is itself useful
     evidence that warm-start is needed.
+
+    Phase 6: when `colony_marker_sensor` is True, three additional
+    sensor nodes are added (marker_left, marker_front, marker_right)
+    and wired to the hidden node with small random weights so the
+    brain can immediately start tuning them.
     """
     g = Genome()
     n_smell_sensors = N_SMELL_A + N_SMELL_B
     n_extra_sensors = 1 + (1 if visible_season_sensor else 0)
-    n_total_sensors = n_smell_sensors + n_extra_sensors
+    n_marker_sensors = 3 if colony_marker_sensor else 0
+    n_total_sensors = n_smell_sensors + n_extra_sensors + n_marker_sensors
 
     sensor_ids: list[int] = []
     for _ in range(n_total_sensors):
@@ -290,6 +297,18 @@ def make_phase3_founder_from_warmstart(
                     in_node=h, out_node=m_id, weight=w, enabled=True,
                 )
                 innov += 1
+        # Phase 6: warm-start branch also wires marker sensors to hidden
+        # with the same small random init as cold start.
+        if n_marker_sensors > 0:
+            for ms in sensor_ids[-n_marker_sensors:]:
+                for h in hidden_ids:
+                    g.connections[innov] = ConnectionGene(
+                        innovation=innov,
+                        in_node=ms, out_node=h,
+                        weight=float(rng.normal(0.0, sigma * 0.5)),
+                        enabled=True,
+                    )
+                    innov += 1
     else:
         # Cold start: random weights on all smell->hidden and hidden->motor.
         for src in sensor_ids[:n_smell_sensors]:
@@ -307,6 +326,20 @@ def make_phase3_founder_from_warmstart(
                     innovation=innov,
                     in_node=h, out_node=m,
                     weight=float(rng.normal(0, sigma)),
+                    enabled=True,
+                )
+                innov += 1
+
+    # Phase 6: wire marker sensor nodes to hidden with small weights so
+    # the brain starts tuning them from tick 1. Marker sensors are the
+    # LAST n_marker_sensors of sensor_ids (after smell+feedback+season).
+    if n_marker_sensors > 0:
+        for ms in sensor_ids[-n_marker_sensors:]:
+            for h in hidden_ids:
+                g.connections[innov] = ConnectionGene(
+                    innovation=innov,
+                    in_node=ms, out_node=h,
+                    weight=float(rng.normal(0.0, sigma * 0.5)),
                     enabled=True,
                 )
                 innov += 1
@@ -482,10 +515,12 @@ class MemoryEcologyWorld(World):
 
     def _spawn_founder(self) -> None:
         """Phase 3 founder with 6 distinct A/B smell sensors."""
+        from .config import COLONY_MARKER_OFF
         genome = make_phase3_founder_from_warmstart(
             rng=self.rng,
             warm_genome=self._warm_genome,
             visible_season_sensor=self.visible_season_sensor,
+            colony_marker_sensor=not COLONY_MARKER_OFF,
         )
         for c in genome.connections.values():
             self.innovations.innovation_for(c.in_node, c.out_node)

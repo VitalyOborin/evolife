@@ -91,7 +91,7 @@ COLONY_MARKER_OFF: bool = True          # master switch
 COLONY_MARKER_EMIT: float = 1.0         # amount added per successful eat
 COLONY_MARKER_DECAY: float = 0.95       # per-tick multiplicative decay
 COLONY_MARKER_DIFFUSION: float = 0.3    # 0=no spread, 1=fully uniform per tick
-COLONY_MARKER_GRID_SCALE: int = 8       # grid cells per world unit (cell size = 1/scale)
+COLONY_MARKER_GRID_SCALE: int = 1       # grid cells per world unit (cell size = 1/scale)
 
 # Phase 3: how many ticks after `eat` the intake_feedback signal remains
 # non-zero in the organism. 1 means it disappears next tick; 2 means it

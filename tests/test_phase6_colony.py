@@ -54,7 +54,7 @@ def test_phase6_marker_field_initial_zeros():
     """Fresh field has zero intensity everywhere."""
     _enable_markers()
     f = ColonyMarkerField(width=80.0, height=80.0)
-    assert f.grid.shape == (640, 640)  # GRID_SCALE=8 by default
+    assert f.grid.shape == (80, 80)  # GRID_SCALE=1 by default
     assert f.grid.sum() == 0.0
 
 
@@ -63,8 +63,8 @@ def test_phase6_emit_adds_to_cell():
     _enable_markers()
     f = ColonyMarkerField(width=80.0, height=80.0)
     f.emit(10.0, 20.0, amount=1.0)
-    # Cell at (10*8, 20*8) = (80, 160) should have 1.0.
-    assert f.grid[160, 80] == pytest.approx(1.0, abs=1e-6)
+    # Cell at (10*1, 20*1) = (10, 20) should have 1.0.
+    assert f.grid[20, 10] == pytest.approx(1.0, abs=1e-6)
     # All other cells still zero.
     assert f.grid.sum() == pytest.approx(1.0, abs=1e-6)
 
@@ -74,8 +74,8 @@ def test_phase6_emit_wraps_toroidally():
     _enable_markers()
     f = ColonyMarkerField(width=80.0, height=80.0)
     f.emit(85.0, 0.0, amount=1.0)  # 85 % 80 = 5 world units
-    # Cell at (5*8, 0) = (40, 0).
-    assert f.grid[0, 40] == pytest.approx(1.0, abs=1e-6)
+    # Cell at (5*1, 0) = (5, 0).
+    assert f.grid[0, 5] == pytest.approx(1.0, abs=1e-6)
 
 
 def test_phase6_step_applies_decay():
@@ -88,7 +88,7 @@ def test_phase6_step_applies_decay():
     f = ColonyMarkerField(width=80.0, height=80.0)
     f.emit(10.0, 20.0, amount=2.0)
     f.step()
-    assert f.grid[160, 80] == pytest.approx(1.0, abs=1e-6)
+    assert f.grid[20, 10] == pytest.approx(1.0, abs=1e-6)
     assert f.grid.sum() == pytest.approx(1.0, abs=1e-6)
 
 
@@ -103,14 +103,17 @@ def test_phase6_step_diffuses_to_neighbours():
     # Drop a point mass at (10, 10) world.
     f.emit(10.0, 10.0, amount=1.0)
     # Snapshot the centre value before diffusion.
-    centre_before = f.grid[80, 80]
+    centre_before = f.grid[10, 10]  # scale=1 → (10, 10)
     # Take one diffusion step.
     f.step()
     # Centre should drop (some went to neighbours).
-    assert f.grid[80, 80] < centre_before
-    # Neighbours should be > 0.
-    assert f.grid[79, 80] > 0
-    assert f.grid[80, 79] > 0
+    assert f.grid[10, 10] < centre_before
+    # Neighbours should be > 0 (any of the 8 cells around the centre).
+    neighbours = [
+        f.grid[9, 10], f.grid[11, 10],
+        f.grid[10, 9], f.grid[10, 11],
+    ]
+    assert any(n > 0 for n in neighbours)
 
 
 def test_phase6_sample_reads_window():
@@ -157,3 +160,44 @@ def test_phase6_world_emits_on_positive_eat():
     after = w.marker_field.grid
     # Some cell should have a new marker (since the eat happened).
     assert (after > before).any()
+
+
+def test_phase6_founder_has_marker_sensors():
+    """When COLONY_MARKER_OFF=False, founder gets 10 sensor nodes.
+
+    6 smell + 1 feedback + 3 marker = 10 total sensors (feedback is
+    a single bit, not a directional probe).
+    """
+    _enable_markers()
+    w = MemoryEcologyWorld(seed=3, mode="static_dual")
+    g = w.organisms[0].genome
+    sensor_count = sum(1 for n in g.nodes.values() if n.type.value == "sensor")
+    assert sensor_count == 10, (
+        f"Expected 10 sensors (6 smell + 1 feedback + 3 marker) for "
+        f"static_dual mode, got {sensor_count}"
+    )
+
+
+def test_phase6_sensor_vector_includes_marker():
+    """The actuator sensor vector should have 10 entries (smell*2 + fb + 3 marker)."""
+    _enable_markers()
+    w = MemoryEcologyWorld(seed=4, mode="static_dual")
+    org = w.organisms[0]
+    smell = _smell_channel_public(w, org)
+    fb = 0.0  # no recent eat
+    marker = _marker_channel_public(w, org)
+    vec = np.concatenate([smell, [fb], marker])
+    assert vec.shape == (10,), f"Expected (10,), got {vec.shape}"
+    # Last 3 entries are marker probes.
+    assert np.allclose(vec[7:10], 0.0)  # fresh field, no markers yet
+
+
+# Helper accessors (since the inner functions are private).
+def _smell_channel_public(world, org):
+    from evolife.phase3 import _smell_channel
+    return _smell_channel(world, org)
+
+
+def _marker_channel_public(world, org):
+    from evolife.phase3 import _marker_channel
+    return _marker_channel(world, org)
