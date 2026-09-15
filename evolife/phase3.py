@@ -127,6 +127,37 @@ def _smell_channel(world: World, org: Organism) -> NDArray[np.float32]:
     return np.concatenate([a, b]).astype(np.float32)
 
 
+def _marker_channel(world: World, org: Organism) -> NDArray[np.float32]:
+    """Phase 6: read social marker field at organism's position.
+
+    Returns a (3,) vector with three directional probes (left, front,
+    right). Inert when COLONY_MARKER_OFF=True (returns zeros).
+    """
+    from .config import COLONY_MARKER_OFF
+    if COLONY_MARKER_OFF:
+        return np.zeros(3, dtype=np.float32)
+    # Use the same three probe directions as smell, but read the
+    # marker field instead of food. Sample radius of 1 grid cell.
+    field = world.marker_field
+    sample = field.sample
+    angle_off = SMELL_HALF_ANGLE
+    # Offsets relative to org.heading.
+    headings = (
+        org.heading - angle_off,
+        org.heading,
+        org.heading + angle_off,
+    )
+    vals = []
+    for h in headings:
+        px = org.x + np.cos(h) * 1.0  # 1 world unit ahead
+        py = org.y + np.sin(h) * 1.0
+        # Clamp into world bounds (the field is toroidal anyway).
+        px = px % world.width
+        py = py % world.height
+        vals.append(sample(px, py, radius=1.0))
+    return np.array(vals, dtype=np.float32)
+
+
 def make_phase3_founder_from_warmstart(
     rng: np.random.Generator,
     warm_genome: Genome | None = None,
@@ -354,6 +385,9 @@ class MemoryEcologyWorld(World):
         # every season change, decremented each tick. 0 disables the
         # mechanism entirely (Phase 3/4 backward compat).
         self.grace_ticks_remaining: int = 0
+        # Phase 6: social marker field. Inert when COLONY_MARKER_OFF.
+        from .colony import ColonyMarkerField
+        self.marker_field = ColonyMarkerField(self.width, self.height)
         # Phase 3 reproduction threshold (separate from the global one
         # used by the legacy World).
         self._reproduction_threshold = PHASE3_REPRODUCTION_THRESHOLD
@@ -546,6 +580,11 @@ class MemoryEcologyWorld(World):
         # 5. Resolve eat (signed reward, feedback).
         self._resolve_eat_phase3()
 
+        # 5a. Phase 6: step the marker field (decay + diffusion) once
+        # per world tick, AFTER eats so markers emitted this tick are
+        # not immediately diffused. Inert when COLONY_MARKER_OFF.
+        self.marker_field.step()
+
         # 5b. Phase 4 lifetime synaptic plasticity. Apply reward-
         # modulated Hebbian updates to each organism's brain using the
         # most recent forward-pass activations and the current
@@ -605,19 +644,27 @@ class MemoryEcologyWorld(World):
           [a_left, a_front, a_right,
            b_left, b_front, b_right,
            intake_feedback,
-           (optional) season in {0, 1}]
+           (optional) season in {0, 1},
+           (optional) marker_left, marker_front, marker_right]
         """
+        from .config import COLONY_MARKER_OFF
         smell = _smell_channel(self, org)
         fb = float(org.intake_feedback) if org.intake_feedback_ttl > 0 else 0.0
+        marker = _marker_channel(self, org) if not COLONY_MARKER_OFF else None
+        n_extras = 1  # feedback always
         if self.visible_season_sensor:
-            arr = np.empty(N_SMELL_A + N_SMELL_B + 2, dtype=np.float32)
-            arr[:N_SMELL_A + N_SMELL_B] = smell
-            arr[FEEDBACK_INDEX] = fb
+            n_extras += 1
+        if marker is not None:
+            n_extras += 3
+        arr = np.empty(N_SMELL_A + N_SMELL_B + n_extras, dtype=np.float32)
+        arr[:N_SMELL_A + N_SMELL_B] = smell
+        arr[FEEDBACK_INDEX] = fb
+        idx = FEEDBACK_INDEX + 1
+        if self.visible_season_sensor:
             arr[SEASON_INDEX] = float(self.season)
-        else:
-            arr = np.empty(N_SMELL_A + N_SMELL_B + 1, dtype=np.float32)
-            arr[:N_SMELL_A + N_SMELL_B] = smell
-            arr[FEEDBACK_INDEX] = fb
+            idx = SEASON_INDEX + 1
+        if marker is not None:
+            arr[idx:idx + 3] = marker
         return arr
 
     def _resolve_eat_phase3(self) -> None:
@@ -710,6 +757,15 @@ class MemoryEcologyWorld(World):
             if org.brain is not None:
                 org.brain.accumulate_episode_reward(
                     1.0 if reward > 0 else -1.0
+                )
+            # Phase 6: deposit a generic marker at the eat site. Inert
+            # when COLONY_MARKER_OFF=True (Phase 3/4/5 backward compat).
+            # We only mark positive eats -- negative eats are not
+            # informative "food here" signals.
+            from .config import COLONY_MARKER_EMIT, COLONY_MARKER_OFF
+            if not COLONY_MARKER_OFF and reward > 0:
+                self.marker_field.emit(
+                    eaten.x, eaten.y, amount=COLONY_MARKER_EMIT
                 )
             self.events.record_eat(
                 self.tick, org_id=org.id,

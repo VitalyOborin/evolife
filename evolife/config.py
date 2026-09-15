@@ -81,6 +81,18 @@ SEASON_LENGTH: int = 2000
 PHASE3_GRACE_TICKS: int = 200
 PHASE3_GRACE_PENALTY: float = -0.5
 
+# Phase 6: social marker field (Choe & Chung 2011 style). When an
+# organism successfully eats, it deposits a generic marker at its
+# location. Markers diffuse and decay over time. Other organisms can
+# sense the marker field, providing an external memory channel that
+# does not require recurrent structure in the brain. All defaults are
+# inert when COLONY_MARKER_OFF=True (Phase 3/4/5 backward compat).
+COLONY_MARKER_OFF: bool = True          # master switch
+COLONY_MARKER_EMIT: float = 1.0         # amount added per successful eat
+COLONY_MARKER_DECAY: float = 0.95       # per-tick multiplicative decay
+COLONY_MARKER_DIFFUSION: float = 0.3    # 0=no spread, 1=fully uniform per tick
+COLONY_MARKER_GRID_SCALE: int = 8       # grid cells per world unit (cell size = 1/scale)
+
 # Phase 3: how many ticks after `eat` the intake_feedback signal remains
 # non-zero in the organism. 1 means it disappears next tick; 2 means it
 # lingers. Short window is closer to CANON "single-tick intake signal".
