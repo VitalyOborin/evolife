@@ -154,6 +154,8 @@ class GpuWorld:
         # Scratch indices for finding free slots.
         self._next_id = 0
         self.tick = 0
+        self.tick_births: int = 0
+        self.tick_mutations: int = 0
 
         # Spawn founders.
         for _ in range(INITIAL_POPULATION):
@@ -272,6 +274,8 @@ class GpuWorld:
 
     def step(self) -> None:
         self.tick += 1
+        self.tick_births = 0
+        self.tick_mutations = 0
 
         # 1. Regrow food.
         self._regrow_food()
@@ -558,6 +562,7 @@ class GpuWorld:
             # operations on the gene_w slice.
             new_w = list(parent_genes_w)
             new_en = list(parent_genes_en)
+            changed = False
             for i in range(MAX_CONNS_PER_ORG):
                 if not parent_genes_en[i]:
                     continue
@@ -573,6 +578,8 @@ class GpuWorld:
                             -5.0, 5.0,
                         )
                     )
+                    if new_w[i] != parent_genes_w[i]:
+                        changed = True
             # Push child gene data to free slot.
             self.gene_in[free] = torch.tensor(
                 parent_genes_in, dtype=torch.int32, device=D
@@ -588,6 +595,7 @@ class GpuWorld:
             )
             child_bias = self.node_bias[slot].cpu().numpy().copy()
             if self.rng.random() < BIAS_MUTATION_RATE:
+                changed = True
                 n_nodes = child_bias.shape[0]
                 for j in range(N_SENSORS, n_nodes):
                     if self.rng.random() < BIAS_REPLACE_RATE:
@@ -632,8 +640,9 @@ class GpuWorld:
             self.brain_state[free].zero_()
             # Deduct parent energy.
             self.energy[slot] = self.energy[slot] - REPRODUCTION_ENERGY
-            # Archive milestones (observability only).
-            self._check_milestones_gpu(free)
+            self.tick_births += 1
+            if changed:
+                self.tick_mutations += 1
             # Archive milestones (observability only).
             self._check_milestones_gpu(free)
 

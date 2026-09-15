@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 
-from .config import SMELL_FIELD_RADIUS
+from .config import PROBE_DISTANCE, SMELL_FIELD_RADIUS
 
 
 class SmellField:
@@ -102,7 +102,6 @@ def _sample_three(
     """Three-probe sample with soft saturation, used by both single and
     dual smell fields. Returns float32 array of shape (3,) in [0, 1].
     """
-    PROBE_DISTANCE = 8.0
     k = 3.0
 
     def probe(angle_offset: float) -> float:

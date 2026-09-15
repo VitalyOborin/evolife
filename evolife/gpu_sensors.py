@@ -25,6 +25,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .config import PROBE_DISTANCE as CONFIG_PROBE_DISTANCE
 from .config import SMELL_FIELD_RADIUS
 
 
@@ -45,7 +46,7 @@ class GpuSmellField:
     same soft saturation as the CPU sample().
     """
 
-    PROBE_DISTANCE = 8.0
+    PROBE_DISTANCE = CONFIG_PROBE_DISTANCE
 
     def __init__(
         self,

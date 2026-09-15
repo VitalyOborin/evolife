@@ -107,6 +107,8 @@ class World:
         self.food: list[Food] = []
         self.smell = SmellField(width, height)
         self._next_id: int = 0
+        self.tick_births: int = 0
+        self.tick_mutations: int = 0
 
     def _populate_initial(self) -> None:
         """Spawn founders + initial food. Subclasses can override."""
@@ -165,6 +167,8 @@ class World:
     def step(self) -> None:
         """Advance one tick."""
         self.tick += 1
+        self.tick_births = 0
+        self.tick_mutations = 0
 
         # 1. Regrow food in proportion to the deficit vs FOOD_TARGET.
         missing = FOOD_TARGET - len(self.food)
@@ -473,11 +477,14 @@ class World:
             )
 
     def _mutate(self, genome: Genome) -> Genome:
+        self.tick_births += 1
         g = mutate_weights(genome, self.rng)
         g = mutate_biases(g, self.rng)
         g = mutate_add_connection(g, self.rng, self.innovations)
         g = mutate_add_node(g, self.rng, self.innovations)
         g = mutate_toggle_connection(g, self.rng)
+        if g is not genome:
+            self.tick_mutations += 1
         return g
 
     # --- diagnostics -------------------------------------------------------
