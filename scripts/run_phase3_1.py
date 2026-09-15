@@ -106,6 +106,10 @@ def main() -> None:
     p.add_argument("--repro-threshold", type=float, default=None,
                    help="Override PHASE3_REPRODUCTION_THRESHOLD for this "
                         "run. Higher values slow reproduction.")
+    p.add_argument("--grace-ticks", type=int, default=None,
+                   help="Override PHASE3_GRACE_TICKS. Phase 5: after a "
+                        "season flip, negative food gives a softened "
+                        "penalty for this many ticks. Set 0 to disable.")
     args = p.parse_args()
 
     import json
@@ -137,6 +141,10 @@ def main() -> None:
             cfg.PHASE3_REPRODUCTION_THRESHOLD = args.repro_threshold
             ph3.PHASE3_REPRODUCTION_THRESHOLD = args.repro_threshold
             overrides.append(f"PHASE3_REPRO_THRESH={args.repro_threshold}")
+        if args.grace_ticks is not None:
+            cfg.PHASE3_GRACE_TICKS = args.grace_ticks
+            ph3.PHASE3_GRACE_TICKS = args.grace_ticks
+            overrides.append(f"PHASE3_GRACE_TICKS={args.grace_ticks}")
         print(f"overrides applied: {', '.join(overrides)}", flush=True)
     print("Three worlds (static_dual / visible_season / hidden_season):")
     print()

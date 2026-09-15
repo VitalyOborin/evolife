@@ -60,6 +60,8 @@ from .config import (
     FOOD_REGROWTH_RATE,
     FOOD_TARGET,
     IDLE_ENERGY_COST,
+    PHASE3_GRACE_PENALTY,
+    PHASE3_GRACE_TICKS,
     INITIAL_LOCOMOTION_BIAS_SIGMA,
     INITIAL_POPULATION,
     INITIAL_WEIGHT_SIGMA,
@@ -347,6 +349,11 @@ class MemoryEcologyWorld(World):
         # Season state.
         self.season: int = 0
         self.ticks_in_season: int = 0
+        # Phase 5 grace period: ticks remaining with soft negative
+        # penalty after a season flip. Set to PHASE3_GRACE_TICKS on
+        # every season change, decremented each tick. 0 disables the
+        # mechanism entirely (Phase 3/4 backward compat).
+        self.grace_ticks_remaining: int = 0
         # Phase 3 reproduction threshold (separate from the global one
         # used by the legacy World).
         self._reproduction_threshold = PHASE3_REPRODUCTION_THRESHOLD
@@ -496,8 +503,15 @@ class MemoryEcologyWorld(World):
         if self.season_enabled and self.ticks_in_season >= SEASON_LENGTH:
             self.season = 1 - self.season
             self.ticks_in_season = 0
+            # Phase 5: open a grace window where negative food is
+            # soft-penalised so the brain can adapt to the new sign
+            # of reward without immediate mass starvation.
+            if PHASE3_GRACE_TICKS > 0:
+                self.grace_ticks_remaining = PHASE3_GRACE_TICKS
         if self.season_enabled:
             self.ticks_in_season += 1
+            if self.grace_ticks_remaining > 0:
+                self.grace_ticks_remaining -= 1
 
         # 1. Regrow food per resource.
         a_target = int(PHASE3_FOOD_TARGET * FOOD_A_FRACTION)
@@ -661,6 +675,19 @@ class MemoryEcologyWorld(World):
                     if self.season == 1
                     else PHASE3_FOOD_B_NEGATIVE_ENERGY
                 )
+            # Phase 5: grace period after season flip. While in the
+            # grace window, negative food gives a softened penalty
+            # that interpolates linearly from PHASE3_GRACE_PENALTY
+            # (at flip) back to the full negative_energy (at the end
+            # of the window). Positive food is unchanged.
+            if (
+                reward < 0
+                and PHASE3_GRACE_TICKS > 0
+                and self.grace_ticks_remaining > 0
+            ):
+                # 1.0 immediately after flip, 0.0 at end of window.
+                t = self.grace_ticks_remaining / PHASE3_GRACE_TICKS
+                reward = PHASE3_GRACE_PENALTY * t + reward * (1.0 - t)
             org.energy += reward
             org.food_eaten += 1
             if org.time_to_first_food is None:

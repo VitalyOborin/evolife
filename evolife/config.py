@@ -71,6 +71,16 @@ FOOD_B_NEGATIVE_ENERGY: float = -3.0
 # Phase 3: how long a season lasts in ticks before flipping sign of rewards.
 SEASON_LENGTH: int = 2000
 
+# Phase 5: grace period after a season flip. For the first
+# PHASE3_GRACE_TICKS ticks after a season change, negative food gives
+# PHASE3_GRACE_PENALTY (a soft penalty) instead of the full
+# PHASE3_FOOD_*_NEGATIVE_ENERGY. The penalty interpolates linearly from
+# soft to hard over the grace window. This gives the brain time to
+# adapt to the new sign of reward before the full selective pressure
+# kicks in. Set PHASE3_GRACE_TICKS=0 to disable.
+PHASE3_GRACE_TICKS: int = 200
+PHASE3_GRACE_PENALTY: float = -0.5
+
 # Phase 3: how many ticks after `eat` the intake_feedback signal remains
 # non-zero in the organism. 1 means it disappears next tick; 2 means it
 # lingers. Short window is closer to CANON "single-tick intake signal".
@@ -190,6 +200,9 @@ SMELL_FIELD_RADIUS: int = 24
 # 2*half_angle cover (3 * 2 * half_angle) radians; for pi/3 (=60deg)
 # half-angle each, this gives full 360 coverage with overlap.
 SMELL_HALF_ANGLE: float = 1.05  # ~60deg
+
+# Distance of each smell probe from the body along left / front / right.
+PROBE_DISTANCE: float = 8.0
 
 
 # --- Metabolic cost (v2) ----------------------------------------------------

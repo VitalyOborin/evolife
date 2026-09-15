@@ -115,6 +115,10 @@ def main() -> int:
                    help="EMA for organism-level R_b (default 0.99).")
     p.add_argument("--neg-energy", type=float, default=None,
                    help="Override PHASE3_FOOD_*_NEGATIVE_ENERGY for this run.")
+    p.add_argument("--grace-ticks", type=int, default=None,
+                   help="Override PHASE3_GRACE_TICKS. Phase 5: after a "
+                        "season flip, negative food gives a softened "
+                        "penalty for this many ticks. Set 0 to disable.")
     args = p.parse_args()
 
     # Apply Phase 4.1 plasticity constants.
@@ -134,6 +138,12 @@ def main() -> int:
         ph3.PHASE3_FOOD_A_NEGATIVE_ENERGY = args.neg_energy
         ph3.PHASE3_FOOD_B_NEGATIVE_ENERGY = args.neg_energy
         print(f"override PHASE3_NEG={args.neg_energy}", flush=True)
+    if args.grace_ticks is not None:
+        import evolife.config as cfg
+        import evolife.phase3 as ph3
+        cfg.PHASE3_GRACE_TICKS = args.grace_ticks
+        ph3.PHASE3_GRACE_TICKS = args.grace_ticks
+        print(f"override PHASE3_GRACE_TICKS={args.grace_ticks}", flush=True)
 
     warm = None
     if args.warm_json:
