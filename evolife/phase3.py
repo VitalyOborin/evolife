@@ -517,6 +517,16 @@ class MemoryEcologyWorld(World):
         # 5. Resolve eat (signed reward, feedback).
         self._resolve_eat_phase3()
 
+        # 5b. Phase 4 lifetime synaptic plasticity. Apply reward-
+        # modulated Hebbian updates to each organism's brain using the
+        # most recent forward-pass activations and the current
+        # intake_feedback signal. No-op when PLASTICITY_ALPHA and
+        # PLASTICITY_BETA are both 0 (Phase 3 default).
+        for org in self.organisms:
+            if not org.alive or org.brain is None:
+                continue
+            org.brain.apply_plasticity(float(org.intake_feedback))
+
         # 6. Drain + death.
         survivors: list[Organism] = []
         for org in self.organisms:

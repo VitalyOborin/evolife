@@ -56,6 +56,13 @@ def _activation_id(a: Activation) -> int:
     }[a]
 
 
+# Phase 4 lifetime synaptic plasticity. Phase 3 (and earlier) ignore
+# these and structural mutation alone drives all weight change.
+PLASTICITY_ALPHA: float = 0.0   # local Hebbian term (pre * post)
+PLASTICITY_BETA: float = 0.0    # reward-modulated term (RPE * pre * post)
+PLASTICITY_WEIGHT_CLAMP: float = 5.0  # keep weights bounded
+
+
 @dataclass
 class _CompiledNet:
     """Pre-sorted view of one genome, ready for forward evaluation."""
@@ -83,6 +90,10 @@ class Brain:
         self._compiled: _CompiledNet | None = None
         self._compiled_hash: str | None = None
         self.state: np.ndarray | None = None
+        # Phase 4: pre-activations from the last forward pass, kept
+        # for plasticity updates. None until forward() runs.
+        self._last_pre: np.ndarray | None = None
+        self._last_post: np.ndarray | None = None
 
     def forward(self, sensors: np.ndarray) -> np.ndarray:
         net = self._ensure_compiled()
@@ -105,6 +116,10 @@ class Brain:
         # Sensors overwrite the first n_sensor positions every tick.
         # This is the "perception" boundary: sensor values come from
         # the world, not from internal state.
+        # Snapshot the *previous* state as pre-activations BEFORE
+        # we overwrite sensors (recurrent edges can read hidden->hidden
+        # from prior tick).
+        pre = self.state.copy()
         self.state[:n_sensor] = sensors
 
         if net.in_idx.size > 0:
@@ -128,8 +143,63 @@ class Brain:
                     net.act_ids[non_sensor_mask], delta[non_sensor_mask]
                 )
 
+        # Cache pre/post activations for Phase 4 plasticity. pre was
+        # the state BEFORE this forward pass wrote sensors; the post
+        # is the post-activation state right now.
+        self._last_pre = pre
+        self._last_post = self.state.copy()
+
         motor_vals = self.state[net.motor_idx]
         return np.clip(motor_vals, -1.0, 1.0).astype(np.float32)
+
+    def apply_plasticity(self, reward_signal: float) -> None:
+        """Phase 4 lifetime synaptic plasticity update.
+
+        Applies a local Hebbian term plus a reward-modulated term
+        to every active edge in the compiled network. Reward signal
+        is the intake_feedback at the current tick (e.g. +1.0 or
+        -1.0 or 0.0 if no recent eat).
+
+        Updates the in-place compiled weights AND the genome's
+        connection weight for next reproduction, then clamps to
+        PLASTICITY_WEIGHT_CLAMP. No-op if PLASTICITY_ALPHA and
+        PLASTICITY_BETA are both zero (Phase 3 default) or if
+        forward() hasn't run yet.
+        """
+        if PLASTICITY_ALPHA == 0.0 and PLASTICITY_BETA == 0.0:
+            return
+        if self._last_pre is None or self._last_post is None:
+            return
+        net = self._ensure_compiled()
+        if net.in_idx.size == 0:
+            return
+        pre_vals = self._last_pre[net.in_idx]
+        post_vals = self._last_post[net.out_idx]
+        target = post_vals
+        local = pre_vals * (post_vals - target)
+        modulation = PLASTICITY_BETA * reward_signal * pre_vals * post_vals
+        delta = (PLASTICITY_ALPHA * local + modulation).astype(np.float32)
+        # Apply in-place to compiled weights.
+        new_w = net.weights + delta
+        np.clip(new_w, -PLASTICITY_WEIGHT_CLAMP, PLASTICITY_WEIGHT_CLAMP,
+                out=new_w)
+        net.weights = new_w
+        # Mirror back into genome.connections for inheritance.
+        # The compiled net's (in_idx, out_idx) are positional; the genome
+        # connections are keyed by innovation id. Cache the mapping.
+        cache = getattr(self, "_edge_to_innov", None)
+        if cache is None or len(cache) != net.in_idx.size:
+            cache = {}
+            for k, c in self.genome.connections.items():
+                cache[(c.in_node, c.out_node)] = k
+            self._edge_to_innov = cache
+        # Vectorise the genome update via numpy indexing is hard because
+        # cache is heterogeneous; this loop runs once per tick and is
+        # acceptable for Phase 4's opt-in plasticity.
+        for i in range(net.in_idx.size):
+            k = cache.get((int(net.in_idx[i]), int(net.out_idx[i])))
+            if k is not None:
+                self.genome.connections[k].weight = float(new_w[i])
 
     def reset_state(self) -> None:
         self.state = None
