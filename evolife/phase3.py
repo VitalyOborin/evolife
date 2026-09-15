@@ -395,6 +395,14 @@ class MemoryEcologyWorld(World):
                 generation=org.generation + 1,
                 founder_lineage_id=org.founder_lineage_id,
             )
+            # Phase 4.1: parent commits its lifetime trace before the
+            # child starts its own episode. The child inherits the
+            # parent's post-commit weights (already mirrored to its
+            # genome by commit_episode) and starts fresh.
+            if org.brain is not None:
+                org.brain.commit_episode()
+            if child.brain is not None:
+                child.brain.begin_episode()
             child.species_id = self.species_manager.assign(
                 child_genome,
                 self.tick,
@@ -453,6 +461,11 @@ class MemoryEcologyWorld(World):
             brain=Brain(genome),
             genome=genome,
         )
+        # Phase 4.1: each new lifetime starts with a fresh eligibility
+        # trace and zeroed episode reward accumulator. Reward baseline
+        # is preserved across episodes for long-lived organisms.
+        if org.brain is not None:
+            org.brain.begin_episode()
         self.organisms.append(org)
         self.events.record_birth(
             self.tick, org_id=oid, parent_id=None,
@@ -476,6 +489,8 @@ class MemoryEcologyWorld(World):
     def step(self) -> None:
         """Advance one tick. Phase 3 dual-resource + optional season."""
         self.tick += 1
+        self.tick_births = 0
+        self.tick_mutations = 0
 
         # 0. Season flip if enabled.
         if self.season_enabled and self.ticks_in_season >= SEASON_LENGTH:
@@ -544,6 +559,13 @@ class MemoryEcologyWorld(World):
             if org.energy <= 0.0 or org.age >= MAX_AGE:
                 cause = "starvation" if org.energy <= 0.0 else "old_age"
                 org.alive = False
+                # Phase 4.1: end-of-life commit. The lifetime trace
+                # shapes weights that won't be inherited (organism is
+                # dead) but this matters for population-level reward
+                # baseline statistics and any cross-generation memory
+                # tests. Mirrors the reproduction-side commit semantics.
+                if org.brain is not None:
+                    org.brain.commit_episode()
                 self.events.record_death(self.tick, org_id=org.id, cause=cause)
                 continue
             org.peak_energy = max(org.peak_energy, org.energy)
@@ -653,6 +675,15 @@ class MemoryEcologyWorld(World):
                 org.positive_eats = getattr(org, "positive_eats", 0) + 1
             else:
                 org.negative_eats = getattr(org, "negative_eats", 0) + 1
+            # Phase 4.1: feed the *signed* reward into the lifetime
+            # episode accumulator. The actual plastic update is committed
+            # at episode boundaries (starvation or reproduction), not
+            # per-tick. sign(reward) keeps the magnitude small so a
+            # single bad bite doesn't dominate the trace commit.
+            if org.brain is not None:
+                org.brain.accumulate_episode_reward(
+                    1.0 if reward > 0 else -1.0
+                )
             self.events.record_eat(
                 self.tick, org_id=org.id,
                 x=eaten.x, y=eaten.y,

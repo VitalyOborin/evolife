@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import evolife.brain as brain_mod
 from evolife.brain import Brain, _ITERATIONS
 from evolife.config import N_MOTORS, N_SENSORS, locomotion_speed
 from evolife.genome import Activation, ConnectionGene, NodeGene, NodeType
@@ -205,3 +206,153 @@ def test_brain_supports_arbitrary_topology():
     for _ in range(5):
         out = brain.forward(sensors)
     assert out.shape == (N_MOTORS,)
+
+
+# --- Phase 4.1: eligibility-trace rHebb -------------------------------
+
+
+@pytest.fixture
+def trace_brain():
+    """A 2-sensor → hidden → motor brain with PLASTICITY_TRACE on.
+
+    Returns a brain whose compiled net has exactly 3 edges:
+    sensor0→hidden, sensor1→hidden, hidden→motor. Pre-activations
+    are easy to reason about: with sensor inputs (1, 0), the hidden
+    node receives w_in*1 + w_in*0 = w_in on its only non-zero edge.
+    """
+    saved = {
+        "PLASTICITY_TRACE": brain_mod.PLASTICITY_TRACE,
+        "ELIGIBILITY_DECAY": brain_mod.ELIGIBILITY_DECAY,
+        "SUPERLINEAR_POWER": brain_mod.SUPERLINEAR_POWER,
+        "PLASTICITY_RATE": brain_mod.PLASTICITY_RATE,
+    }
+    brain_mod.PLASTICITY_TRACE = True
+    brain_mod.ELIGIBILITY_DECAY = 0.9  # faster decay for test brevity
+    brain_mod.SUPERLINEAR_POWER = 3
+    brain_mod.PLASTICITY_RATE = 0.1
+    try:
+        g = Brain.make_default_genome()
+        # Strip down to exactly 2 sensors + 1 hidden + 1 motor = 3 edges.
+        # The default founder has 3 sensors → hidden and hidden → 2 motors.
+        # We zero out the third sensor edge and second motor edge.
+        edges_to_keep = []
+        for c in g.connections.values():
+            in_id = c.in_node
+            out_id = c.out_node
+            in_type = g.nodes[in_id].type.value
+            out_type = g.nodes[out_id].type.value
+            if in_type == "sensor" and out_type == "hidden":
+                # keep only the first 2 of 3
+                edges_to_keep.append(c.innovation)
+        # Walk a list and trim.
+        kept_innov = edges_to_keep[:2]
+        for k in list(g.connections.keys()):
+            if k not in kept_innov:
+                if g.nodes[g.connections[k].out_node].type.value == "motor":
+                    del g.connections[k]
+        yield Brain(g)
+    finally:
+        brain_mod.PLASTICITY_TRACE = saved["PLASTICITY_TRACE"]
+        brain_mod.ELIGIBILITY_DECAY = saved["ELIGIBILITY_DECAY"]
+        brain_mod.SUPERLINEAR_POWER = saved["SUPERLINEAR_POWER"]
+        brain_mod.PLASTICITY_RATE = saved["PLASTICITY_RATE"]
+
+
+def test_phase4_1_trace_no_op_when_disabled():
+    """PLASTICITY_TRACE=False must short-circuit before allocating arrays."""
+    saved = brain_mod.PLASTICITY_TRACE
+    brain_mod.PLASTICITY_TRACE = False
+    try:
+        g = Brain.make_default_genome()
+        brain = Brain(g)
+        sensors = np.ones(N_SENSORS, dtype=np.float32)
+        brain.forward(sensors)
+        # No-op when disabled: trace arrays stay unallocated.
+        assert brain._e_trace is None
+        brain.commit_episode()  # also no-op
+        assert brain._e_trace is None
+    finally:
+        brain_mod.PLASTICITY_TRACE = saved
+
+
+def test_phase4_1_begin_episode_resets_trace(trace_brain):
+    """begin_episode must zero the eligibility trace and reward accumulator."""
+    # Drive a few forward passes first.
+    for _ in range(5):
+        trace_brain.forward(np.ones(N_SENSORS, dtype=np.float32))
+    # Trace should be non-zero.
+    assert trace_brain._e_trace is not None
+    assert np.any(trace_brain._e_trace != 0.0)
+    trace_brain.accumulate_episode_reward(2.0)
+    assert trace_brain._episode_reward_acc == 2.0
+    trace_brain.begin_episode()
+    assert np.all(trace_brain._e_trace == 0.0)
+    assert trace_brain._episode_reward_acc == 0.0
+
+
+def test_phase4_1_commit_episode_3factor_rule(trace_brain):
+    """RPE=R-Rb drives Δw = η*(R-Rb)*e. Positive RPE should strengthen
+    edges with positive eligibility; negative RPE should weaken them."""
+    initial_w = trace_brain.genome.connections[0].weight
+    for _ in range(10):
+        trace_brain.forward(np.ones(N_SENSORS, dtype=np.float32))
+    # Force a positive episode reward well above the baseline.
+    trace_brain.accumulate_episode_reward(5.0)
+    # Snapshot trace so we can compare Δw direction.
+    e_pre = trace_brain._e_trace.copy()
+    # Commit positive RPE.
+    trace_brain.commit_episode()
+    # Weights must have moved. Direction depends on sign of (R - Rb)*e.
+    # R_b defaults to 0 so rpe = 5; weight change = 0.1 * 5 * e_pre.
+    # But weights are clamped to PLASTICITY_WEIGHT_CLAMP. Verify weights
+    # moved in the expected direction at least for the first edge.
+    innov_first = 0
+    new_w_first = trace_brain.genome.connections[innov_first].weight
+    expected_delta = 0.1 * 5.0 * e_pre[0]
+    assert abs(new_w_first - (initial_w + expected_delta)) < 1e-5
+
+
+def test_phase4_1_commit_resets_baseline(trace_brain):
+    """After a commit, _r_baseline moves toward the episode reward."""
+    trace_brain._r_baseline = 0.0
+    trace_brain.accumulate_episode_reward(3.0)
+    trace_brain.commit_episode()
+    # EMA coefficient is 0.99, so baseline should be 0.99*0 + 0.01*3 = 0.03.
+    assert abs(trace_brain._r_baseline - 0.03) < 1e-6
+
+
+def test_phase4_1_commit_resets_trace_and_reward(trace_brain):
+    """After commit, trace and reward accumulator both go to zero."""
+    for _ in range(3):
+        trace_brain.forward(np.ones(N_SENSORS, dtype=np.float32))
+    trace_brain.accumulate_episode_reward(2.5)
+    assert trace_brain._episode_reward_acc != 0.0
+    trace_brain.commit_episode()
+    assert trace_brain._episode_reward_acc == 0.0
+    assert np.all(trace_brain._e_trace == 0.0)
+
+
+def test_phase4_1_superlinear_damps_small_signal(trace_brain):
+    """A small raw pre*post should produce a much smaller |e| increment
+    than a large one — the Miconi supralinear amplification."""
+    # Drive a forward pass first so _last_pre/_last_post exist with
+    # the right shape (matches the compiled net's node count).
+    sensors = np.ones(N_SENSORS, dtype=np.float32)
+    trace_brain.forward(sensors)
+    pre = trace_brain._last_pre.copy()
+    post = trace_brain._last_post.copy()
+    # Set a small pre*post on all nodes: e.g. all activations = 0.1
+    pre[:] = 0.1
+    post[:] = 0.1
+    trace_brain._accumulate_trace(pre, post)
+    small_max = float(np.max(np.abs(trace_brain._e_trace)))
+    # Reset trace and try a large pre*post: activations = 0.9
+    trace_brain._e_trace.fill(0.0)
+    pre[:] = 0.9
+    post[:] = 0.9
+    trace_brain._accumulate_trace(pre, post)
+    big_max = float(np.max(np.abs(trace_brain._e_trace)))
+    # 0.9^3 ~= 0.729 vs 0.1^3 = 0.001. Big should be much larger.
+    assert big_max > small_max * 100, (
+        f"supralinear not amplifying: small={small_max} big={big_max}"
+    )

@@ -62,6 +62,18 @@ PLASTICITY_ALPHA: float = 0.0   # local Hebbian term (pre * post)
 PLASTICITY_BETA: float = 0.0    # reward-modulated term (RPE * pre * post)
 PLASTICITY_WEIGHT_CLAMP: float = 5.0  # keep weights bounded
 
+# Phase 4.1 eligibility-trace reward-modulated Hebbian plasticity
+# (Miconi 2017 rHebb). When PLASTICITY_TRACE is True, each forward
+# pass accumulates a per-edge eligibility trace e_ij, and episodes
+# commit the accumulated trace weighted by reward-prediction-error.
+# See PHASE4_LIT.md for the design rationale.
+PLASTICITY_TRACE: bool = False      # master switch for Phase 4.1
+ELIGIBILITY_DECAY: float = 0.95     # lambda in e(t) = lam * e(t-1) + ...
+ELIGIBILITY_BASELINE_EMA: float = 0.99  # EMA for the per-edge <pre*post>
+SUPERLINEAR_POWER: int = 3          # S(x) = sign(x) * |x|^k, Miconi's non-linearity
+PLASTICITY_RATE: float = 0.005      # eta in Delta_w = eta (R - Rb) e
+REWARD_BASELINE_EMA: float = 0.99   # EMA decay for R_b (organism-level)
+
 
 @dataclass
 class _CompiledNet:
@@ -94,6 +106,14 @@ class Brain:
         # for plasticity updates. None until forward() runs.
         self._last_pre: np.ndarray | None = None
         self._last_post: np.ndarray | None = None
+        # Phase 4.1: per-edge eligibility trace, per-edge Hebbian
+        # baseline EMA, organism-level reward baseline, and accumulated
+        # episode reward. Allocated lazily so the default (Phase 3)
+        # brain has zero per-tick overhead.
+        self._e_trace: np.ndarray | None = None
+        self._e_baseline: np.ndarray | None = None
+        self._r_baseline: float = 0.0
+        self._episode_reward_acc: float = 0.0
 
     def forward(self, sensors: np.ndarray) -> np.ndarray:
         net = self._ensure_compiled()
@@ -149,6 +169,12 @@ class Brain:
         self._last_pre = pre
         self._last_post = self.state.copy()
 
+        # Phase 4.1: eligibility-trace accumulation. No-op if the
+        # trace is disabled (Phase 3 default). Allocated lazily so
+        # the no-plasticity path stays zero-cost.
+        if PLASTICITY_TRACE and net.in_idx.size > 0:
+            self._accumulate_trace(pre, self.state)
+
         motor_vals = self.state[net.motor_idx]
         return np.clip(motor_vals, -1.0, 1.0).astype(np.float32)
 
@@ -200,6 +226,113 @@ class Brain:
             k = cache.get((int(net.in_idx[i]), int(net.out_idx[i])))
             if k is not None:
                 self.genome.connections[k].weight = float(new_w[i])
+
+    # --- Phase 4.1 eligibility-trace plasticity (Miconi 2017 rHebb) -----
+
+    def _ensure_trace(self, n_edges: int) -> None:
+        """Allocate per-edge trace + baseline if absent."""
+        if self._e_trace is None or self._e_trace.size != n_edges:
+            self._e_trace = np.zeros(n_edges, dtype=np.float32)
+            self._e_baseline = np.zeros(n_edges, dtype=np.float32)
+
+    def _accumulate_trace(self, pre_full: np.ndarray, post_full: np.ndarray) -> None:
+        """One step of Miconi-style eligibility-trace accumulation.
+
+        e_ij(t) = lambda * e_ij(t-1) + S(pre_i * (post_j - <pre*post>_ema))
+        where S(x) = sign(x) * |x|^SUPERLINEAR_POWER and the per-edge
+        baseline tracks the running mean of pre*post. The decay lambda
+        and EMA coefficient come from module constants; this method is
+        called once per forward() pass when PLASTICITY_TRACE is on.
+        """
+        net = self._ensure_compiled()
+        self._ensure_trace(net.in_idx.size)
+        pre_vals = pre_full[net.in_idx].astype(np.float32)
+        post_vals = post_full[net.out_idx].astype(np.float32)
+        raw = pre_vals * post_vals
+        # Update per-edge baseline EMA: b <- c * b + (1 - c) * raw
+        self._e_baseline *= ELIGIBILITY_BASELINE_EMA
+        self._e_baseline += (1.0 - ELIGIBILITY_BASELINE_EMA) * raw
+        centered = raw - self._e_baseline
+        # Supralinear: keep sign, raise magnitude. Small |x| damped, large
+        # co-activation amplified. Use np.copysign for vectorised sign.
+        k = SUPERLINEAR_POWER
+        nonlin = np.copysign(np.abs(centered) ** k, centered).astype(np.float32)
+        self._e_trace *= ELIGIBILITY_DECAY
+        self._e_trace += nonlin
+
+    def accumulate_episode_reward(self, r: float) -> None:
+        """Add a tick-level reward signal to the running episode total.
+
+        Called from the world's eat handler; the running sum is what
+        gets committed at episode boundaries (reproduction or death).
+        """
+        self._episode_reward_acc += float(r)
+
+    def begin_episode(self) -> None:
+        """Start a new lifetime episode. Resets eligibility trace and
+        the per-episode reward accumulator. Keeps _r_baseline (the
+        organism-level reward baseline is preserved across episodes
+        so a long-lived individual learns RPE-style).
+        """
+        if self._e_trace is not None:
+            self._e_trace.fill(0.0)
+        self._episode_reward_acc = 0.0
+
+    def commit_episode(self) -> None:
+        """End-of-episode plasticity commit (Miconi 2017).
+
+        Delta_w_ij = PLASTICITY_RATE * (R - R_b) * e_ij(T)
+        then update R_b <- EMA(R_b, R), clamp weights, mirror back to
+        genome for inheritance, reset trace. No-op if trace disabled,
+        no edges, or accumulated reward is exactly zero (degenerate
+        case: starve at birth before eating anything).
+        """
+        if not PLASTICITY_TRACE:
+            return
+        R = float(self._episode_reward_acc)
+        Rb = float(self._r_baseline)
+        # Update reward baseline first — this is independent of the
+        # trace state. Even on degenerate episodes (no edges, no
+        # forward call yet) we want R_b to track running reward.
+        self._r_baseline = REWARD_BASELINE_EMA * Rb + (1.0 - REWARD_BASELINE_EMA) * R
+        net = self._ensure_compiled()
+        if (
+            self._e_trace is None
+            or net.in_idx.size == 0
+            or self._e_trace.size != net.in_idx.size
+        ):
+            # No edges or trace not yet allocated: nothing to learn.
+            self._episode_reward_acc = 0.0
+            return
+        rpe = R - Rb
+        if rpe == 0.0:
+            # No learning signal this episode. Baseline already updated
+            # above; just reset trace and accumulator.
+            if self._e_trace is not None:
+                self._e_trace.fill(0.0)
+            self._episode_reward_acc = 0.0
+            return
+        delta = (PLASTICITY_RATE * rpe * self._e_trace).astype(np.float32)
+        new_w = net.weights + delta
+        np.clip(new_w, -PLASTICITY_WEIGHT_CLAMP, PLASTICITY_WEIGHT_CLAMP,
+                out=new_w)
+        net.weights = new_w
+        # Mirror to genome.connections so inherited offspring inherit
+        # the lifetime-shaped weights. Same edge cache as Phase 4.
+        cache = getattr(self, "_edge_to_innov", None)
+        if cache is None or len(cache) != net.in_idx.size:
+            cache = {}
+            for k, c in self.genome.connections.items():
+                cache[(c.in_node, c.out_node)] = k
+            self._edge_to_innov = cache
+        for i in range(net.in_idx.size):
+            k = cache.get((int(net.in_idx[i]), int(net.out_idx[i])))
+            if k is not None:
+                self.genome.connections[k].weight = float(new_w[i])
+        # Reward baseline already updated above. Reset trace for next
+        # episode; keep _r_baseline.
+        self._e_trace.fill(0.0)
+        self._episode_reward_acc = 0.0
 
     def reset_state(self) -> None:
         self.state = None
