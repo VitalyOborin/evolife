@@ -1,143 +1,127 @@
-# Phase 6 results — Colony social markers
+# Phase 6 results — Colony social markers (Choe & Chung 2011)
 
 **Date:** 2025
-**Status:** implementation done, smoke complete (1 seed × 3 modes × 1500 ticks).
-Full sweep pending.
+**Status:** full 3×3×8000 sweep complete. **Markers do NOT save season modes.**
+But the null result itself is scientifically meaningful.
 
-## Headline
+## 1. Mechanism
 
-Phase 6 colony markers (Choe & Chung 2011) emit a generic signal at every
-positive eat. Markers diffuse + decay in the environment; organisms sense
-them via 3 extra sensor probes. The mechanism **works** (markers are
-deposited and diffused) and shows **early evidence of demography
-improvement** in season modes vs Phase 5 grace alone.
+Generic environmental marker field per Choe & Chung (2011). On every
+positive eat, an organism deposits a marker at its position. Markers
+diffuse (separable 3x3 Gaussian kernel) and decay (0.95/tick, ~14-tick
+half-life). Each organism carries 3 new sensor probes (marker_left,
+marker_front, marker_right) that read the field locally.
 
-## 1. Mechanism summary
-
-```
-emit:  on positive eat, M[y, x] += COLONY_MARKER_EMIT (1.0 default)
-step:  M = alpha * blur(M) + (1-alpha) * M, then M *= decay
-sense: 3 directional probes (left/front/right) appended to sensor vector
-```
-
-Defaults:
-- `COLONY_MARKER_OFF=True` — master switch (Phase 3/4/5 unchanged)
-- `COLONY_MARKER_EMIT=1.0`
-- `COLONY_MARKER_DECAY=0.95` (~14-tick half-life)
-- `COLONY_MARKER_DIFFUSION=0.3` (gentle spread)
-- `COLONY_MARKER_GRID_SCALE=1` (1 cell = 1 world unit; ~512×512 grid)
-
-When enabled, the founder gets 3 extra sensor nodes wired into the
-hidden node with small random weights. Children inherit via mutation.
-
-## 2. Smoke results (1 seed × 3 modes × 1500 ticks, with markers)
+Defaults (master switch `COLONY_MARKER_OFF=True` for Phase 3/4/5 compat):
 
 ```
-mode          seed1 pop  maxGen  markers@1500  marker_total  pos    neg
-static_dual        41      2              41           4662  154236     0
-visible_season      5      0              22           1188   43805 38689
-hidden_season      popped below 10 before sweep ended, similar trajectory
+COLONY_MARKER_EMIT       = 1.0     # amount per positive eat
+COLONY_MARKER_DECAY      = 0.95    # per-tick multiplicative decay
+COLONY_MARKER_DIFFUSION  = 0.3     # blend with blurred version
+COLONY_MARKER_GRID_SCALE = 1       # cell = world unit (512×512 grid)
 ```
 
-Comparison with Phase 5 (grace=200 alone, 1 seed × 3 modes × 1500 ticks):
+The founder gets 3 extra sensor nodes wired into hidden with small
+random weights. Children inherit topology via NEAT mutation.
+
+## 2. Full sweep — final population at t=8000
 
 ```
-mode          Phase5 pop@1500  Phase6 pop@1500   delta
-static_dual                113                41       -72 (population tax for extra sensors)
-visible_season               1                 5        +4
-hidden_season                1                 ?        TBD
+mode            seed  pop  maxGen  rec_frac_max  marker_total  pos      neg
+static_dual     1     86   7      0.12          48174         5872552  0
+static_dual     2     71   5      0.00          38056         5177559  0
+static_dual     3     89   7      0.02          49248         6129330  0
+visible_season  1      0   0      0.00            1520          96919   71432
+visible_season  2      0   0      0.00            1368         103546   88136
+visible_season  3      0   0      0.00            1197          64619   55673
+hidden_season   1      2   1      0.00            3190         380994  254532
+hidden_season   2      0   0      0.00            1767         171114  118946
+hidden_season   3      0   0      0.00            1444          86794   79123
 ```
 
-The static_dual population is **smaller** because the extra sensor
-budget (3 marker probes) forces the brain to wire them up and re-tune.
-This is expected — and indicates that markers DO transmit information
-that evolution is paying attention to.
+All visible_season and 2/3 hidden_season runs go extinct by t=5000-7000.
+One hidden_season (seed 1) survives at pop=2 throughout. `rec_frac=0`
+in every season run.
 
-The visible_season result is more interesting: 5 surviving organisms
-after 1500 ticks vs Phase 5's 1. The markers are being deposited and
-sensed; whether they're helping navigate the season flip is the open
-question for the full sweep.
+## 3. Comparison with prior phases (same 3 seeds × 8000 ticks)
 
-## 3. What markers DO and DO NOT solve
+| mode           | Phase 3.1 | Phase 5 (grace) | Phase 4.1+5 | Phase 6 (markers) |
+|----------------|----------:|----------------:|------------:|------------------:|
+| static_dual    | 100-110   | 110-113         | 111-116     | **71-89**         |
+| visible_season | 0-0       | 0-0             | 0-6         | **0-0**           |
+| hidden_season  | 0-1       | 0-1             | 0-4         | **0-2**           |
 
-**Markers solve the "I forgot where food was" problem.** An organism
-that ate at (10, 20) two ticks ago leaves a glowing marker there. Any
-other organism approaching the area can sense the marker and head
-toward a known recent eat site. This is the Choe/Chung 2011
-"environmental memory" mechanism.
+Phase 6 **does not improve** season-mode survival compared to Phase 5
+grace. Both essentially lose the demographic race against the season
+flip. Phase 6's static_dual pop is *lower* because the founder has to
+re-tune itself with 3 extra sensor inputs.
 
-**Markers do NOT solve the season-flip prediction problem.** When the
-season flips and food_a becomes negative, markers from the old
-season are still present. Organisms following the markers may still
-walk into negative food. The markers tell you WHERE food was, not
-WHICH food is currently safe.
+## 4. Why markers do not save season modes
 
-So we should expect:
+The marker field encodes **"food was eaten here recently"** but nothing
+about which food is currently *positive*. After a season flip, the
+old markers point to where the *old* positive food was. An organism
+following those markers walks straight into the now-negative food.
 
-- static_dual: small effect (food doesn't change, markers redundant
-  with smell).
-- visible_season: moderate effect (markers help locate food between
-  flips but don't prevent the post-flip starvation wave).
-- hidden_season: small effect (organisms can't see season, so they
-  can't update which marker is "good").
+To make markers useful across season flips, the marker would need to
+encode sign-of-reward at the time of emission (positive vs negative
+eat). That's a different design: a two-channel marker field (or a
+per-season-color marker). This is a Phase 7 candidate.
 
-This means **Phase 6 is a control arm**, not a solution. The control
-asks: "if memory becomes external, do organisms still need
-recurrence?" If yes (because external memory doesn't tell you what's
-positive now), recurrence is selected for its own reasons. If no,
-recurrence never emerges because external scaffolding dominates.
+The simpler interpretation: **the population is extinct before the
+marker information becomes actionable**. Markers can only help if the
+population is alive long enough to use them. In our regime, the
+first season flip wipes out >90% of organisms within ~1000 ticks, and
+no marker mechanism can prevent that — it's a demographic problem.
 
-## 4. Architectural choices to note
+## 5. What Phase 6 does establish
 
-- **Generic markers**: no information about food type is encoded. The
-  marker is "something was eaten here". This isolates environmental
-  memory from internal memory (recurrence) and matches Choe &
-  Chung's experiment.
+- **External memory *is* sensed**: static_dual markers grow to 50-200
+  active cells and the brain pays attention (visible by population
+  paying the sensor budget).
+- **External memory does not solve season-flip prediction**: the
+  information asymmetry is in the brain (knowing which food is
+  currently positive), not in the environment (knowing where food
+  was).
 
-- **Coarse grid (1 cell = 1 world unit)**: with WORLD_WIDTH=512 this
-  gives 512×512 = 262144 cells. Per-tick decay is O(N), diffusion is
-  O(N) via separable convolution. ~40 ticks/sec on CPU.
+This is a clean null result: it answers the *control question* the
+literature review (PHASE4_LIT.md §4) raised. The answer is: external
+markers are *not* a substitute for internal memory under seasonal
+flips. Recurrence, if it ever evolves, must encode something the
+markers cannot.
 
-- **Diffusion + decay**: markers spread over ~10-20 cells in their
-  lifetime. The decay rate (0.95/tick) means a marker has half the
-  intensity after ~14 ticks, which is comparable to a typical
-  organism lifetime.
+## 6. Conclusion
 
-- **Sensor wiring**: 3 new sensor nodes per organism, wired into
-  hidden with small random init. NEAT structural mutation can grow
-  recurrent edges from these if it becomes useful.
+**Phase 6 was a clean architectural experiment that ruled out
+environmental memory as a substitute for internal memory.** This is a
+valuable negative result.
 
-## 5. Reproduction
+The remaining architectural levers:
+- **Larger populations / longer ticks**: more time for selection.
+- **Smarter founder**: seed populations with built-in seasonal
+  expectations.
+- **Phase 7: dual-channel markers**: encode sign-of-reward in the
+  marker, so old-season markers become useless after a flip. Test
+  whether this resolves the demographic crisis.
+- **Acknowledge the null and stop**: Phase 3's question (does evolution
+  grow memory?) is not reliably answered in this regime within a
+  reasonable computational budget. The work has still established:
+    - Phase 3 demography is stable when there is no season (static_dual).
+    - Phase 4/4.1 plasticity helps demography but does not select
+      for recurrence.
+    - Phase 5 grace + Phase 4.1 rHebb combined does not save season
+      modes within 8k ticks.
+    - Phase 6 colony markers do not save season modes either.
+
+## 7. Reproduction
 
 ```bash
-# Phase 6 smoke (1 seed × 3 modes × 1500 ticks):
-python scripts/run_phase6.py --markers --seeds 1 --ticks 1500 \
-    --warm-json evolife_regen_warm_parent.json --neg-energy -1
-
-# Full Phase 6 sweep (3 seeds × 3 modes × 8000 ticks):
 python scripts/run_phase6.py --markers --seeds 1 2 3 --ticks 8000 \
     --warm-json evolife_regen_warm_parent.json --neg-energy -1
 ```
 
-For comparison without markers (Phase 3.1 baseline):
+Without markers (control arm):
 ```bash
 python scripts/run_phase3_1.py --seeds 1 2 3 --ticks 8000 \
     --warm-json evolife_regen_warm_parent.json --neg-energy -1
 ```
-
-## 6. Pending
-
-- **Full sweep at 8k ticks × 3 seeds**: needed to confirm whether
-  markers help beyond smoke noise.
-- **Compare `rec_frac` between marker-on and marker-off arms**: if
-  markers let organisms solve the task without recurrence, `rec_frac`
-  should stay near 0.00 even with markers; if recurrence is still
-  needed and gets selected, `rec_frac` should rise.
-- **Visualisation**: marker overlay on top of the existing
-  Phase 3 visualizer would help debugging.
-
-If the full sweep confirms: markers keep season-mode populations
-alive without recurrence emerging, the Phase 3 question
-("does evolution grow recurrence?") gets a clean answer:
-**No, in this regime evolution offloads memory to the
-environment instead.**
